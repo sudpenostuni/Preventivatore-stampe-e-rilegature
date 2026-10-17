@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brandBlue: #0061ff;
+  --color-slackPurple: #4a154b;
+  --color-paypalBlue: #1d2b83;
+  --color-notionGray: #f7f7f5;
+  --radius-3xl: 24px;
+  --radius-4xl: 32px;
+}
+
+:root { --font-main: 'Inter', system-ui, -apple-system, sans-serif; }
+body { 
+  font-family: var(--font-main); 
+  background-color: #ffffff; 
+  color: #1a1d21;
+  -webkit-tap-highlight-color: transparent; 
+  padding-bottom: env(safe-area-inset-bottom);
+  /* Hide scrollbar for IE, Edge and Firefox */
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+/* Hide scrollbar for Chrome, Safari and Opera */
+body::-webkit-scrollbar, html::-webkit-scrollbar {
+  display: none;
+}
+.card-shadow { box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1); }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+.btn-touch { transition: transform 0.1s; }
+.btn-touch:active { transform: scale(0.98); }
+.section-transition {
+  transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+}
+.section-closed { max-height: 0; opacity: 0; transform: translateY(10px); pointer-events: none; }
+.section-open { max-height: 5000px; opacity: 1; transform: translateY(0); margin-top: 1.5rem; }
+
+@keyframes slideIn {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-slide { animation: slideIn 0.5s ease-out forwards; }
+@keyframes blink-orange {
+  0%, 100% { border-color: #e2e8f0; }
+  50% { border-color: #f97316; box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.1); }
+}
+.animate-blink-orange { animation: blink-orange 2s infinite; }
+
+@keyframes foil-shimmer {
+  0% { background-position: 0% center; }
+  50% { background-position: 100% center; }
+  100% { background-position: 0% center; }
+}
+.metallic-shimmer {
+  background-size: 250% auto !important;
+  animation: foil-shimmer 8s ease infinite;
+}
+

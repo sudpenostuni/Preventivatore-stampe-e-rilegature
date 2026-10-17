@@ -1,0 +1,5 @@
+{
+  "name": "Preventivo stampe public",
+  "description": "Applicazione professionale per il calcolo preventivi di stampe e appunti universtari, con analisi automatica dei PDF e integrazione WhatsApp.",
+  "requestFramePermissions": []
+}

@@ -1,0 +1,70 @@
+{
+  "entities": {
+    "preventivi": {
+      "title": "Preventivi Tesi",
+      "description": "Preventivi e ordini tesi inviati dall'app pubblica per la gestione dell'operatore backend",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "ID univoco del preventivo"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Data e ora di creazione del preventivo"
+        },
+        "cliente": {
+          "type": "string",
+          "description": "Nome o riferimento cliente se specificato"
+        },
+        "totale": {
+          "type": "number",
+          "description": "Importo totale complessivo in euro"
+        },
+        "copieTotali": {
+          "type": "number",
+          "description": "Numero totale di copie tesi"
+        },
+        "stato": {
+          "type": "string",
+          "enum": ["nuovo", "in_lavorazione", "completato", "annullato"],
+          "description": "Stato di lavorazione per l'operatore backend"
+        },
+        "items": {
+          "type": "array",
+          "description": "Elenco delle tesi incluse nel preventivo",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "materiale": { "type": "string" },
+              "materialePrezzo": { "type": "number" },
+              "incisione": { "type": "string" },
+              "incisioneNome": { "type": "string" },
+              "bwPages": { "type": "number" },
+              "colorPages": { "type": "number" },
+              "cps": { "type": "number" },
+              "costoSubtotale": { "type": "number" }
+            },
+            "required": ["id", "name", "bwPages", "colorPages", "cps", "costoSubtotale"]
+          }
+        },
+        "userAgent": {
+          "type": "string",
+          "description": "Dispositivo e browser dell'utente"
+        }
+      },
+      "required": ["createdAt", "totale", "items", "stato"]
+    }
+  },
+  "security": {
+    "preventivi": {
+      "read": "true",
+      "create": "true",
+      "update": "true",
+      "delete": "false"
+    }
+  }
+}
