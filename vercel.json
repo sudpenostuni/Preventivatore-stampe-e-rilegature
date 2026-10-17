@@ -1,0 +1,16 @@
+{
+  "rewrites": [
+    {
+      "source": "/oxford",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/oxford/(.*)",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}

@@ -10,7 +10,17 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+# Environment variables & secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 *.local
+
+# Firebase config (to avoid Git secret scanner warnings if committing to public GitHub)
+# To stop git from tracking an already committed config: git rm --cached firebase-applet-config.json
+firebase-applet-config.local.json
 
 # Editor directories and files
 .vscode/*

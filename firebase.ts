@@ -2,10 +2,24 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore, collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import firebaseConfig from './firebase-applet-config.json';
 
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+// Configurazione ibrida: supporta sia le variabili d'ambiente VITE_ (per evitare avvisi nei commit Git)
+// sia il file firebase-applet-config.json generato dall'ambiente AI Studio.
+const env = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env : {} as Record<string, any>;
+
+const activeFirebaseConfig = {
+  projectId: env.VITE_FIREBASE_PROJECT_ID || firebaseConfig.projectId,
+  appId: env.VITE_FIREBASE_APP_ID || firebaseConfig.appId,
+  apiKey: env.VITE_FIREBASE_API_KEY || firebaseConfig.apiKey,
+  authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || firebaseConfig.authDomain,
+  firestoreDatabaseId: env.VITE_FIREBASE_DATABASE_ID || firebaseConfig.firestoreDatabaseId || '(default)',
+  storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || firebaseConfig.storageBucket,
+  messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseConfig.messagingSenderId,
+};
+
+const app = getApps().length === 0 ? initializeApp(activeFirebaseConfig) : getApp();
 
 // Inizializza Firestore indicando il databaseId specificato nella configurazione
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId || '(default)');
+export const db = getFirestore(app, activeFirebaseConfig.firestoreDatabaseId || '(default)');
 
 export interface PreventivoItem {
   id: string;

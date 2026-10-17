@@ -102,12 +102,21 @@ const App: React.FC = () => {
     const hash = window.location.hash.toLowerCase();
     const stored = sessionStorage.getItem('oxford_convenzione') === 'true';
 
+    // Se l'utente richiede esplicitamente la modalità standard
+    if (search.includes('standard') || search.includes('reset') || search.includes('sudpen')) {
+      sessionStorage.removeItem('oxford_convenzione');
+      setIsOxford(false);
+      return;
+    }
+
     const hasOxfordMarker = path.includes('/oxford') || search.includes('oxford') || hash.includes('oxford');
     if (hasOxfordMarker) {
       sessionStorage.setItem('oxford_convenzione', 'true');
       setIsOxford(true);
-    } else if (stored) {
+    } else if (stored && path.includes('oxford')) {
       setIsOxford(true);
+    } else {
+      setIsOxford(false);
     }
   }, []);
 
