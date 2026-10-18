@@ -5,7 +5,8 @@ import {
   Trash2, Loader2, FileScan, 
   Plus, Minus, ArrowRight, ArrowDown, ArrowUp, 
   CheckCircle2, X, Download, BookOpen, ChevronLeft, ChevronRight,
-  Gift, Check, Truck, Store, Tag, Sparkles
+  Gift, Check, Truck, Store, Tag, Sparkles, ShoppingCart, FileUp, FileText,
+  Phone, User, Mail, Paperclip
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -33,6 +34,8 @@ interface PrintJob {
   cps: number;
   bindingId: string;
   fileName?: string;
+  file?: File;
+  isBwOnly?: boolean;
 }
 
 const slideVariants = {
@@ -121,7 +124,13 @@ const App: React.FC = () => {
 
   const [jobs, setJobs] = useState<PrintJob[]>([]);
   const [customer, setCustomer] = useState('');
-  const [deliveryMethod, setDeliveryMethod] = useState<'ritiro' | 'spedizione_sda'>('spedizione_sda');
+  const [customerPhone, setCustomerPhone] = useState('');
+  const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
+  const [isSavingOrder, setIsSavingOrder] = useState(false);
+  const [confirmedOrderId, setConfirmedOrderId] = useState<string | null>(null);
+  const [emailSentInfo, setEmailSentInfo] = useState<{ sent: boolean; attachmentsCount: number } | null>(null);
+  const [confirmError, setConfirmError] = useState('');
+  const [deliveryMethod, setDeliveryMethod] = useState<'ritiro' | 'spedizione_sda'>('ritiro');
   const [shippingAddress, setShippingAddress] = useState('');
   const [isStarted, setIsStarted] = useState(false);
   const [currentStep, setCurrentStep] = useState(1);
@@ -129,6 +138,10 @@ const App: React.FC = () => {
   const [analyzingId, setAnalyzingId] = useState<string | null>(null);
   const [selectedBindingDetail, setSelectedBindingDetail] = useState<BindingType | null>(null);
   const [activeEditingJobId, setActiveEditingJobId] = useState<string | null>(null);
+  const [isCartOpen, setIsCartOpen] = useState(false);
+  const [isAllBw, setIsAllBw] = useState(false);
+  const [isBatchUploading, setIsBatchUploading] = useState(false);
+  const [batchUploadProgress, setBatchUploadProgress] = useState<{ current: number; total: number; fileName: string } | null>(null);
   const [showSavedToast, setShowSavedToast] = useState(false);
 
   const carouselRef = useRef<HTMLDivElement>(null);
@@ -139,7 +152,9 @@ const App: React.FC = () => {
     // 1. Pagine colore complessive tra tutti i lavori per sconto volume (>50 pag colore totali = 0.25 anziche 0.30)
     let totalColorPagesAllJobs = 0;
     jobs.forEach(j => {
-      totalColorPagesAllJobs += safeNum(j.colorPages) * Math.max(1, safeNum(j.cps || 1));
+      const isJobBw = isAllBw || !!j.isBwOnly;
+      const effectiveC = isJobBw ? 0 : safeNum(j.colorPages);
+      totalColorPagesAllJobs += effectiveC * Math.max(1, safeNum(j.cps || 1));
     });
 
     const isColorBulk = totalColorPagesAllJobs > PRICING_CONFIG.printColorThreshold;
@@ -151,8 +166,11 @@ const App: React.FC = () => {
     let totalBindGross = 0;
 
     const preliminaryDetails = jobs.map(j => {
-      const b = safeNum(j.bwPages);
-      const c = safeNum(j.colorPages);
+      const isJobBw = isAllBw || !!j.isBwOnly;
+      const originalB = safeNum(j.bwPages);
+      const originalC = safeNum(j.colorPages);
+      const b = isJobBw ? (originalB + originalC) : originalB;
+      const c = isJobBw ? 0 : originalC;
       const totalPages = b + c;
       const copies = Math.max(1, safeNum(j.cps || 1));
 
@@ -172,6 +190,9 @@ const App: React.FC = () => {
         binding,
         b,
         c,
+        originalB,
+        originalC,
+        isJobBw,
         totalPages,
         copies,
         bwRate: bwRateA4,
@@ -232,6 +253,7 @@ const App: React.FC = () => {
       const missingForOver60 = isOver60 ? 0 : Math.max(0, CONVENZIONE_OXFORD_FREE_THRESHOLD - discountedTotalBeforeThreshold);
 
       return {
+        isAllBw,
         isColorBulk,
         colorRateA4,
         grossTotal: grossEstimateBeforeDiscounts,
@@ -289,6 +311,7 @@ const App: React.FC = () => {
     netTotal += standardShippingCost;
 
     return {
+      isAllBw,
       isColorBulk,
       colorRateA4,
       grossTotal,
@@ -385,13 +408,23 @@ const App: React.FC = () => {
     }, 100);
   };
 
-  const analyzePdf = async (id: string, file: File) => {
-    setAnalyzingId(id);
+  // Rilegaura consigliata automatica in base al numero di pagine
+  const getRecommendedBinding = (totalPages: number): string => {
+    if (totalPages <= 1) return 'none'; // Fogli sciolti per pagina singola
+    if (totalPages < 30) {
+      // Sotto le 30 pagine: Spilla laterale (gratuita) o Opuscolo spillato
+      return totalPages <= 15 ? 'staple' : 'stitch';
+    }
+    // Da 30 pagine in poi: Spirale in plastica (la più versatile e adatta ad ogni uso)
+    return 'plastic';
+  };
+
+  // Funzione universale di analisi singola del PDF
+  const analyzeSinglePdf = async (file: File): Promise<{ bw: number; col: number }> => {
     const pdfjsLib = (window as any).pdfjsLib;
     if (!pdfjsLib) {
-      console.error("PDF.js not loaded");
-      setAnalyzingId(null);
-      return;
+      console.warn("PDF.js not loaded, fallback standard");
+      return { bw: 1, col: 0 };
     }
     try {
       const url = URL.createObjectURL(file);
@@ -413,40 +446,116 @@ const App: React.FC = () => {
         isC ? col++ : bw++;
         p.cleanup();
       }
-      setJobs(prev => prev.map(j => j.id === id ? { 
-        ...j, 
-        bwPages: bw, 
-        colorPages: col, 
-        fileName: file.name,
-        name: file.name.replace(/\.[^/.]+$/, "") 
-      } : j));
       URL.revokeObjectURL(url);
+      return { bw, col };
     } catch (err) {
       console.error("Errore analisi file PDF:", err);
+      return { bw: 1, col: 0 };
+    }
+  };
+
+  // Caricamento cumulativo / rapido con apertura diretta carrello e rilegature consigliate
+  const handleBatchUpload = async (files: FileList | File[]) => {
+    if (!files || files.length === 0) return;
+    const fileArray = Array.from(files).filter(f => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
+    
+    if (fileArray.length === 0) return;
+
+    setIsBatchUploading(true);
+    const newJobs: PrintJob[] = [];
+    const timestamp = Date.now();
+
+    for (let idx = 0; idx < fileArray.length; idx++) {
+      const file = fileArray[idx];
+      setBatchUploadProgress({
+        current: idx + 1,
+        total: fileArray.length,
+        fileName: file.name
+      });
+
+      const counts = await analyzeSinglePdf(file);
+      const totalPages = counts.bw + counts.col;
+      const recommendedBinding = getRecommendedBinding(totalPages);
+
+      newJobs.push({
+        id: `${timestamp}-${idx}`,
+        name: file.name.replace(/\.[^/.]+$/, ""),
+        fileName: file.name,
+        file,
+        bwPages: counts.bw,
+        colorPages: counts.col,
+        cps: 1,
+        bindingId: recommendedBinding
+      });
+    }
+
+    setJobs(prev => {
+      // Rimuoviamo eventuali job vuoti non configurati (con 0 pagine e nessun file)
+      const validPrev = prev.filter(j => j.bwPages > 0 || j.colorPages > 0 || !!j.fileName);
+      return [...validPrev, ...newJobs];
+    });
+
+    setIsBatchUploading(false);
+    setBatchUploadProgress(null);
+    setIsStarted(true);
+    setIsCartOpen(true);
+  };
+
+  const analyzePdf = async (id: string, file: File) => {
+    setAnalyzingId(id);
+    try {
+      const counts = await analyzeSinglePdf(file);
+      const totalPages = counts.bw + counts.col;
+      setJobs(prev => prev.map(j => {
+        if (j.id === id) {
+          const recBinding = getRecommendedBinding(totalPages);
+          return {
+            ...j,
+            bwPages: counts.bw,
+            colorPages: counts.col,
+            fileName: file.name,
+            file,
+            name: file.name.replace(/\.[^/.]+$/, ""),
+            bindingId: (!j.bindingId || j.bindingId === 'plastic') ? recBinding : j.bindingId
+          };
+        }
+        return j;
+      }));
     } finally {
       setAnalyzingId(null);
     }
   };
 
-  const saveToBackend = async () => {
-    if (jobs.length === 0) return;
+  const saveToBackend = async (
+    overrideCustomer?: string,
+    overridePhone?: string,
+    sendEmail: boolean = false
+  ): Promise<string | null> => {
+    if (jobs.length === 0) return null;
+
+    const finalClient = (overrideCustomer ?? customer).trim().toUpperCase() || (isOxford ? 'CLIENTE CONVENZIONE OXFORD' : 'CLIENTE WEB');
+    const finalPhone = (overridePhone ?? customerPhone).trim();
+
+    let createdId: string | null = null;
+
+    const items: PreventivoItem[] = calculated.jobDetails.map(d => ({
+      id: d.job.id,
+      name: d.job.name,
+      rilegatura: d.binding.title,
+      rilegaturaId: d.binding.id,
+      rilegaturaPrezzo: d.unitBindPrice,
+      isOmaggio: !!d.isOmaggio,
+      bwPages: d.b,
+      colorPages: d.c,
+      cps: d.copies,
+      costoSubtotale: d.jobFinalCost
+    }));
 
     try {
-      const items: PreventivoItem[] = calculated.jobDetails.map(d => ({
-        id: d.job.id,
-        name: d.job.name,
-        rilegatura: d.binding.title,
-        rilegaturaId: d.binding.id,
-        rilegaturaPrezzo: d.unitBindPrice,
-        isOmaggio: !!d.isOmaggio,
-        bwPages: d.b,
-        colorPages: d.c,
-        cps: d.copies,
-        costoSubtotale: d.jobFinalCost
-      }));
-
-      await savePreventivoToFirestore({
-        cliente: customer.trim().toUpperCase() || (isOxford ? 'CLIENTE CONVENZIONE OXFORD' : 'CLIENTE WEB'),
+      createdId = await savePreventivoToFirestore({
+        cliente: finalClient,
+        telefono: finalPhone,
+        indirizzoSpedizione: deliveryMethod === 'spedizione_sda' ? shippingAddress.trim() : undefined,
         totale: calculated.netTotal,
         totaleLordo: calculated.grossTotal,
         totaleScontoRilegature: calculated.totalDiscounts,
@@ -463,6 +572,67 @@ const App: React.FC = () => {
       console.error("Errore salvataggio Firestore:", err);
     }
 
+    if (sendEmail) {
+      try {
+        const formData = new FormData();
+        const orderPayload = {
+          orderId: createdId || `ORD-${Date.now()}`,
+          cliente: finalClient,
+          telefono: finalPhone,
+          indirizzoSpedizione: deliveryMethod === 'spedizione_sda' ? shippingAddress.trim() : undefined,
+          totale: calculated.netTotal,
+          totaleLordo: calculated.grossTotal,
+          totaleScontoRilegature: calculated.totalDiscounts,
+          scontoConvenzione: calculated.totalConventionDiscount,
+          isConvenzione: isOxford,
+          tipoConsegna: deliveryMethod,
+          costoSpedizione: calculated.shippingCost,
+          copieTotali: calculated.totalCopies,
+          items: calculated.jobDetails.map(d => ({
+            id: d.job.id,
+            name: d.job.name,
+            fileName: d.job.fileName,
+            rilegatura: d.binding.title,
+            isOmaggio: !!d.isOmaggio,
+            bwPages: d.b,
+            colorPages: d.c,
+            isBwOnly: !!d.isJobBw,
+            cps: d.copies,
+            costoSubtotale: d.jobFinalCost
+          }))
+        };
+
+        formData.append('orderData', JSON.stringify(orderPayload));
+
+        let filesCount = 0;
+        for (const job of jobs) {
+          if (job.file) {
+            formData.append('files', job.file, job.fileName || job.file.name);
+            filesCount++;
+          }
+        }
+
+        const emailRes = await fetch('/api/send-order-email', {
+          method: 'POST',
+          body: formData
+        });
+
+        if (emailRes.ok) {
+          const emailJson = await emailRes.json();
+          setEmailSentInfo({
+            sent: true,
+            attachmentsCount: emailJson.attachmentsCount ?? filesCount
+          });
+        } else {
+          console.error('Errore invio email dal server:', await emailRes.text());
+          setEmailSentInfo({ sent: false, attachmentsCount: 0 });
+        }
+      } catch (emailErr) {
+        console.error('Errore richiesta invio email:', emailErr);
+        setEmailSentInfo({ sent: false, attachmentsCount: 0 });
+      }
+    }
+
     if (GSHEET_URL) {
       try {
         const dettagliLavori = calculated.jobDetails.map((d, idx) => {
@@ -472,7 +642,8 @@ const App: React.FC = () => {
 
         const payload = {
           azione: "PREVENTIVO",
-          cliente: customer.trim().toUpperCase() || (isOxford ? 'CLIENTE OXFORD' : 'CLIENTE WEB'),
+          cliente: finalClient,
+          telefono: finalPhone,
           categoria: isOxford ? 'CONVENZIONE OXFORD' : 'STAMPE E RILEGATURE',
           totale: calculated.netTotal.toFixed(2),
           sconto: calculated.totalDiscounts.toFixed(2),
@@ -494,6 +665,8 @@ const App: React.FC = () => {
         console.warn("Spreadsheet log notice:", e);
       }
     }
+
+    return createdId;
   };
 
   const generateReceiptCanvas = (): HTMLCanvasElement | null => {
@@ -571,7 +744,7 @@ const App: React.FC = () => {
     ctx.textAlign = 'right';
     ctx.font = 'bold 15px sans-serif';
     ctx.fillStyle = '#0F172A';
-    ctx.fillText(customer ? `CLIENTE: ${customer.toUpperCase()}` : (isOxford ? 'CLIENTE CONVENZIONE' : 'PREVENTIVO ONLINE'), width - 45, 250);
+    ctx.fillText(customer ? `CLIENTE: ${customer.toUpperCase()}${customerPhone ? ` (${customerPhone})` : ''}` : (isOxford ? 'CLIENTE CONVENZIONE' : 'PREVENTIVO ONLINE'), width - 45, 250);
     ctx.font = 'italic 12px monospace';
     ctx.fillStyle = '#64748B';
     ctx.fillText('Riepilogo preventivo non fiscale', width - 45, 275);
@@ -736,7 +909,17 @@ const App: React.FC = () => {
       : `Ciao SUDPEN, vorrei confermare questo preventivo per stampe e rilegature:\n\n`;
 
     if (customer.trim()) {
-      msg += `👤 *Cliente:* ${customer.trim()}\n\n`;
+      msg += `👤 *Cliente:* ${customer.trim()}\n`;
+    }
+    if (customerPhone.trim()) {
+      msg += `📱 *Cellulare per conferma:* ${customerPhone.trim()}\n`;
+    }
+    if (customer.trim() || customerPhone.trim()) {
+      msg += `\n`;
+    }
+
+    if (isAllBw) {
+      msg += `🖨️ *Opzione:* TUTTO IN BIANCO E NERO (pagine a colori conteggiate in B&N)\n\n`;
     }
 
     calculated.jobDetails.forEach((d, idx) => {
@@ -773,6 +956,744 @@ const App: React.FC = () => {
   return (
     <div className="max-w-md mx-auto min-h-screen flex flex-col p-4 sm:p-6 space-y-6">
       
+      {/* HEADER SUPERIORE PERSISTENTE CON TASTO CARRELLO (SEMPRE ACCESSIBILE) */}
+      <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md -mx-4 sm:-mx-6 -mt-4 sm:-mt-6 px-4 sm:px-6 py-3 border-b border-slate-200/80 flex items-center justify-between shadow-xs mb-1">
+        <div 
+          onClick={() => {
+            setIsStarted(false);
+            setIsCartOpen(false);
+          }}
+          className="flex items-center gap-2 cursor-pointer select-none group"
+        >
+          <img 
+            src={isOxford ? OXFORD_LOGO_URL : LOGO_URL} 
+            alt="Logo" 
+            className="h-8 w-auto object-contain transition-transform group-hover:scale-105" 
+          />
+          <div className="flex flex-col text-left">
+            <span className="text-[11px] font-black uppercase text-slate-900 leading-tight tracking-wider">
+              {isOxford ? 'Oxford College' : 'Sudpen Ostuni'}
+            </span>
+            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
+              {isOxford ? 'Convenzione Mita' : 'Stampe & Rilegature'}
+            </span>
+          </div>
+        </div>
+
+        {/* Tasto Carrello con Badge Articoli e Totale Spesa */}
+        <button
+          type="button"
+          onClick={() => setIsCartOpen(true)}
+          aria-label="Apri Carrello"
+          className={`flex items-center gap-2 px-3 py-1.5 rounded-full border transition-all active:scale-95 cursor-pointer ${
+            jobs.length > 0
+              ? isOxford
+                ? 'bg-amber-50 border-amber-300 text-amber-950 hover:bg-amber-100 shadow-xs'
+                : 'bg-emerald-50 border-emerald-300 text-emerald-950 hover:bg-emerald-100 shadow-xs'
+              : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          <div className="relative flex items-center justify-center">
+            <ShoppingCart size={17} className={jobs.length > 0 ? (isOxford ? 'text-amber-700' : 'text-emerald-700') : 'text-slate-500'} />
+            {jobs.length > 0 && (
+              <span className={`absolute -top-2 -right-2.5 min-w-[18px] h-[18px] px-1 rounded-full text-[9px] font-black flex items-center justify-center text-white ${
+                isOxford ? 'bg-amber-600 ring-2 ring-white' : 'bg-emerald-600 ring-2 ring-white'
+              }`}>
+                {jobs.length}
+              </span>
+            )}
+          </div>
+          <div className="flex flex-col text-left pl-1">
+            <span className="text-[10px] font-black uppercase tracking-wider leading-none">
+              Carrello
+            </span>
+            {jobs.length > 0 && (
+              <span className="text-[10px] font-extrabold text-slate-800 leading-none pt-0.5">
+                {fmt(calculated.netTotal)}
+              </span>
+            )}
+          </div>
+        </button>
+      </header>
+
+      {/* MODALE / DRAWER PAGINA RIASSUNTIVA (CARRELLO) */}
+      <AnimatePresence>
+        {isCartOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm p-0 sm:p-4"
+            onClick={() => setIsCartOpen(false)}
+          >
+            <motion.div
+              initial={{ y: "100%", opacity: 0.8 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: "100%", opacity: 0.8 }}
+              transition={{ type: "spring", damping: 26, stiffness: 280 }}
+              className="bg-white w-full max-w-lg rounded-t-[32px] sm:rounded-[32px] overflow-hidden shadow-2xl flex flex-col max-h-[92vh]"
+              onClick={e => e.stopPropagation()}
+            >
+              {/* Header Carrello */}
+              <div className="p-4 sm:p-5 bg-slate-900 text-white flex justify-between items-center shrink-0 border-b border-slate-800">
+                <div className="flex items-center gap-2.5">
+                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-white ${isOxford ? 'bg-amber-600' : 'bg-emerald-600'}`}>
+                    <ShoppingCart size={18} />
+                  </div>
+                  <div>
+                    <h3 className="font-black text-sm uppercase tracking-wide">
+                      Carrello Preventivo
+                    </h3>
+                    <p className="text-white/60 text-[10px] font-bold uppercase tracking-wider">
+                      {jobs.length === 0 
+                        ? 'Nessun fascicolo aggiunto' 
+                        : `${jobs.length} ${jobs.length === 1 ? 'fascicolo' : 'fascicoli'} • ${calculated.totalCopies} ${calculated.totalCopies === 1 ? 'copia totale' : 'copie totali'}`}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsCartOpen(false)}
+                  className="text-white/70 hover:text-white p-2 rounded-full hover:bg-white/10 transition-colors cursor-pointer"
+                  aria-label="Chiudi Carrello"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Corpo Scorrevole Carrello */}
+              <div className="p-4 sm:p-6 overflow-y-auto space-y-4 flex-1">
+                {jobs.length === 0 ? (
+                  /* Stato Carrello Vuoto */
+                  <div className="py-12 text-center space-y-4">
+                    <div className="w-16 h-16 mx-auto rounded-3xl bg-slate-100 flex items-center justify-center text-slate-400">
+                      <ShoppingCart size={32} />
+                    </div>
+                    <div className="space-y-1">
+                      <h4 className="font-black text-slate-800 uppercase text-sm">Il tuo carrello è vuoto</h4>
+                      <p className="text-slate-500 text-xs max-w-xs mx-auto">
+                        Inizia scegliendo una rilegatura per configurare il tuo documento e vedere il preventivo.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCartOpen(false);
+                        setIsStarted(false);
+                      }}
+                      className={`px-5 py-3 ${isOxford ? 'bg-amber-600 hover:bg-amber-500' : 'bg-emerald-600 hover:bg-emerald-500'} text-white font-black text-xs uppercase rounded-xl shadow cursor-pointer`}
+                    >
+                      Sfoglia Rilegature & Inizia
+                    </button>
+                  </div>
+                ) : (
+                  /* Articoli nel Carrello */
+                  <>
+                    {/* Lista Fascicoli nel Carrello */}
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                          Fascicoli Configurati ({jobs.length})
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsCartOpen(false);
+                            setIsStarted(true);
+                            setCurrentStep(1);
+                            const newJob: PrintJob = {
+                              id: Date.now().toString(),
+                              name: `Fascicolo #${jobs.length + 1}`,
+                              bwPages: 0,
+                              colorPages: 0,
+                              cps: 1,
+                              bindingId: 'plastic'
+                            };
+                            setJobs(prev => [...prev, newJob]);
+                          }}
+                          className="text-[10px] font-black uppercase text-emerald-700 hover:text-emerald-800 flex items-center gap-1 cursor-pointer"
+                        >
+                          <Plus size={12} /> Aggiungi Altro Fascicolo
+                        </button>
+                      </div>
+
+                      {calculated.jobDetails.map((d, idx) => (
+                        <div 
+                          key={d.job.id} 
+                          className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3 shadow-xs hover:border-slate-300 transition-colors"
+                        >
+                          <div className="flex justify-between items-start gap-2">
+                            <div className="space-y-0.5 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="font-black text-slate-900 text-xs uppercase truncate">
+                                  #{idx + 1} {d.job.name}
+                                </span>
+                                {d.job.fileName && (
+                                  <span className="text-[9px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-mono truncate max-w-[110px]">
+                                    {d.job.fileName}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                                <span className="text-[10px] text-slate-400 font-bold uppercase">Rilegatura:</span>
+                                <select
+                                  value={d.job.bindingId}
+                                  onChange={e => {
+                                    const newBid = e.target.value;
+                                    setJobs(prev => prev.map(j => j.id === d.job.id ? { ...j, bindingId: newBid } : j));
+                                  }}
+                                  className="text-[11px] font-black text-slate-800 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg px-2 py-0.5 focus:outline-none cursor-pointer"
+                                >
+                                  {BINDING_TYPES.map(bt => (
+                                    <option key={bt.id} value={bt.id}>
+                                      {bt.title} {bt.id === 'none' ? '(Fogli sciolti)' : `(${bt.priceInfo})`}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+
+                            {/* Tasto Rimuovi */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setJobs(prev => prev.filter(j => j.id !== d.job.id));
+                              }}
+                              className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer shrink-0"
+                              title="Elimina dal carrello"
+                              aria-label="Elimina fascicolo"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+
+                          {/* Dettagli Pagine, Costi & Switch Tutto Bianco e Nero (posizionato come da freccia) */}
+                          <div className="flex items-center justify-between gap-3 text-[11px] bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                            <div className="min-w-0 flex-1">
+                              <span className="text-slate-400 block text-[9px] font-black uppercase">Pagine B&N</span>
+                              <span className="font-bold text-slate-800 text-xs">{d.b} pag</span>
+                              <span className="text-[10px] text-slate-500 block">{fmt(d.b * d.bwRate)}</span>
+                            </div>
+
+                            <div className="min-w-0 flex-1">
+                              <span className="text-slate-400 block text-[9px] font-black uppercase">Pagine Colore</span>
+                              <span className="font-bold text-slate-800 text-xs">{d.c} pag</span>
+                              <span className="text-[10px] text-slate-500 block">
+                                {d.isJobBw && (d.originalC || 0) > 0 ? (
+                                  <span className="text-slate-400 line-through">era {d.originalC} col.</span>
+                                ) : (
+                                  fmt(d.c * d.colorRate)
+                                )}
+                              </span>
+                            </div>
+
+                            {/* Toggle Tutto B&N posizionato sul lato destro del box come indicato dalla freccia */}
+                            <div className="flex flex-col items-end justify-center shrink-0 pl-3 border-l border-slate-200/80">
+                              <span className="text-[9px] font-black uppercase tracking-wider text-slate-700 mb-1">
+                                Tutto B&N
+                              </span>
+                              <button
+                                type="button"
+                                role="switch"
+                                aria-checked={d.isJobBw}
+                                onClick={() => {
+                                  setJobs(prev => prev.map(job => job.id === d.job.id ? { ...job, isBwOnly: !d.isJobBw } : job));
+                                }}
+                                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${d.isJobBw ? 'bg-slate-900' : 'bg-slate-300'}`}
+                                title="Attiva/Disattiva tutto in bianco e nero"
+                              >
+                                <span
+                                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${d.isJobBw ? 'translate-x-5' : 'translate-x-0'}`}
+                                />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Banner Omaggio per Fascicolo */}
+                          {d.isOmaggio && (
+                            <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase flex items-center justify-between">
+                              <span className="flex items-center gap-1">
+                                <Gift size={12} className="text-emerald-600" />
+                                {d.allOmaggio ? 'Rilegatura in Omaggio!' : `${d.freeBindingsCount} Rilegatur${d.freeBindingsCount > 1 ? 'e' : 'a'} Omaggio!`}
+                              </span>
+                              <span className="font-black">-{fmt(d.discount)}</span>
+                            </div>
+                          )}
+
+                          {/* Controlli Copie e Subtotale Fascicolo */}
+                          <div className="flex items-center justify-between pt-1 border-t border-slate-100">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-black uppercase text-slate-400">Copie:</span>
+                              <div className="flex items-center border border-slate-200 rounded-lg overflow-hidden bg-slate-50 h-7">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setJobs(prev => prev.map(j => j.id === d.job.id ? { ...j, cps: Math.max(1, (j.cps || 1) - 1) } : j));
+                                  }}
+                                  className="w-7 h-full flex items-center justify-center text-slate-600 hover:bg-slate-200 active:bg-slate-300 cursor-pointer"
+                                  aria-label="Diminuisci copie"
+                                >
+                                  <Minus size={12} />
+                                </button>
+                                <span className="w-8 text-center text-xs font-black text-slate-900">
+                                  {d.copies}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setJobs(prev => prev.map(j => j.id === d.job.id ? { ...j, cps: (j.cps || 1) + 1 } : j));
+                                  }}
+                                  className="w-7 h-full flex items-center justify-center text-slate-600 hover:bg-slate-200 active:bg-slate-300 cursor-pointer"
+                                  aria-label="Aumenta copie"
+                                >
+                                  <Plus size={12} />
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="text-right">
+                              <span className="text-[10px] font-black uppercase text-slate-400 block">Subtotale</span>
+                              <span className="font-black text-sm text-slate-900">
+                                {fmt(d.jobFinalCost)}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Riepilogo Spesa & Sconti nel Carrello */}
+                    <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200 space-y-2 text-xs">
+                      <div className="flex justify-between items-center text-slate-600">
+                        <span>Totale Stampe:</span>
+                        <span className="font-bold text-slate-800">
+                          {fmt(calculated.jobDetails.reduce((acc, d) => acc + d.jobPrintCost, 0))}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center text-slate-600">
+                        <span>Totale Rilegature:</span>
+                        <span className="font-bold text-slate-800">
+                          {fmt(calculated.jobDetails.reduce((acc, d) => acc + d.jobBindCost, 0))}
+                        </span>
+                      </div>
+                      {deliveryMethod === 'spedizione_sda' && (
+                        <div className="flex justify-between items-center text-slate-600">
+                          <span>Spedizione SDA:</span>
+                          <span className={`font-bold ${calculated.shippingCost === 0 ? 'text-emerald-700 font-black' : 'text-slate-800'}`}>
+                            {calculated.shippingCost === 0 ? 'GRATIS (> 60€)' : fmt(calculated.shippingCost)}
+                          </span>
+                        </div>
+                      )}
+                      {isOxford ? (
+                        <div className="flex justify-between items-center text-emerald-700 font-bold">
+                          <span>Sconto Convenzione Oxford (20%):</span>
+                          <span>-{fmt(calculated.totalConventionDiscount)}</span>
+                        </div>
+                      ) : (
+                        calculated.totalDiscounts > 0 && (
+                          <div className="flex justify-between items-center text-emerald-700 font-bold">
+                            <span>Sconti Rilegature Omaggio:</span>
+                            <span>-{fmt(calculated.totalDiscounts)}</span>
+                          </div>
+                        )
+                      )}
+
+                      <div className="pt-2 border-t border-slate-200 flex justify-between items-center">
+                        <div>
+                          <span className="font-black uppercase text-slate-900 text-xs block">Totale Carrello:</span>
+                          <span className="text-[10px] text-slate-400 font-medium">IVA inclusa</span>
+                        </div>
+                        <span className="text-2xl font-black text-emerald-700">
+                          {fmt(calculated.netTotal)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* BOX CONSEGNA: Spostato sul fondo del modale (sotto il totale) */}
+                    <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-200 space-y-2.5">
+                      <div className="flex items-center justify-between text-xs flex-wrap gap-2">
+                        <span className="font-bold text-slate-700 uppercase text-[10px] tracking-wider flex items-center gap-1.5">
+                          <Truck size={13} className="text-slate-500" />
+                          Modalità di Consegna:
+                        </span>
+                        <div className="flex gap-1.5 w-full sm:w-auto">
+                          <button
+                            type="button"
+                            onClick={() => setDeliveryMethod('spedizione_sda')}
+                            className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-xl text-[10px] font-black uppercase transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                              deliveryMethod === 'spedizione_sda' 
+                                ? (isOxford ? 'bg-amber-600 text-white shadow-xs' : 'bg-emerald-600 text-white shadow-xs')
+                                : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+                            }`}
+                          >
+                            <Truck size={12} />
+                            Spedizione SDA {calculated.shippingCost === 0 ? '(Gratis)' : `(${fmt(SDA_SHIPPING_PRICE)})`}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDeliveryMethod('ritiro')}
+                            className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-xl text-[10px] font-black uppercase transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                              deliveryMethod === 'ritiro' 
+                                ? (isOxford ? 'bg-amber-600 text-white shadow-xs' : 'bg-emerald-600 text-white shadow-xs')
+                                : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+                            }`}
+                          >
+                            <Store size={12} />
+                            Ritiro Ostuni (Gratis)
+                          </button>
+                        </div>
+                      </div>
+
+                      {deliveryMethod === 'spedizione_sda' && (
+                        <div className="pt-1">
+                          <input 
+                            type="text" 
+                            value={shippingAddress}
+                            onChange={e => setShippingAddress(e.target.value)}
+                            placeholder="Indirizzo e CAP per la spedizione SDA (facoltativo)"
+                            className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-slate-400"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Footer Azioni Carrello */}
+              {jobs.length > 0 && (
+                <div className="p-4 sm:p-5 bg-gray-50 border-t border-slate-200 space-y-2.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setConfirmedOrderId(null);
+                      setEmailSentInfo(null);
+                      setConfirmError('');
+                      setIsConfirmModalOpen(true);
+                    }}
+                    className={`w-full h-13 ${isOxford ? 'bg-amber-600 hover:bg-amber-500' : 'bg-emerald-600 hover:bg-emerald-500'} text-white font-black text-xs sm:text-sm uppercase rounded-2xl flex items-center justify-center gap-2 shadow-lg transition-transform active:scale-[0.98] cursor-pointer`}
+                  >
+                    Procedi all'Ordine & Ricevi Conferma <ArrowRight size={16} />
+                  </button>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        saveReceiptPdf();
+                      }}
+                      className="h-10 bg-slate-800 hover:bg-slate-700 text-white font-black text-[11px] uppercase rounded-xl flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                    >
+                      <Download size={13} /> Scarica PDF
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsCartOpen(false)}
+                      className="h-10 bg-white hover:bg-slate-100 text-slate-700 font-bold text-[11px] uppercase rounded-xl border border-slate-200 transition-colors cursor-pointer"
+                    >
+                      Modifica Pagine
+                    </button>
+                  </div>
+                </div>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* MODALE CONFERMA ORDINE CON NOME, CELLULARE, FIREBASE E INVIO EMAIL CON FILE ALLEGATI */}
+      <AnimatePresence>
+        {isConfirmModalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+            onClick={() => {
+              if (!isSavingOrder) setIsConfirmModalOpen(false);
+            }}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 20 }}
+              onClick={e => e.stopPropagation()}
+              className="bg-white w-full max-w-md rounded-3xl overflow-hidden shadow-2xl border border-slate-100 flex flex-col max-h-[90vh]"
+            >
+              {/* Header Modale */}
+              <div className="p-5 bg-slate-900 text-white flex justify-between items-center shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-2xl flex items-center justify-center text-white ${isOxford ? 'bg-amber-600' : 'bg-emerald-600'} shadow-md`}>
+                    <CheckCircle2 size={20} />
+                  </div>
+                  <div>
+                    <h3 className="font-black text-sm uppercase tracking-wide">
+                      Conferma il tuo Ordine
+                    </h3>
+                    <p className="text-white/60 text-[11px] font-medium">
+                      Inserisci i tuoi dati per inviare ordine e file
+                    </p>
+                  </div>
+                </div>
+                {!isSavingOrder && (
+                  <button
+                    type="button"
+                    onClick={() => setIsConfirmModalOpen(false)}
+                    className="text-white/60 hover:text-white p-1.5 rounded-full hover:bg-white/10 transition-colors cursor-pointer"
+                  >
+                    <X size={18} />
+                  </button>
+                )}
+              </div>
+
+              {/* Corpo Modale */}
+              <div className="p-6 space-y-4 overflow-y-auto">
+                {confirmedOrderId ? (
+                  /* Stato Successo con ID Firebase e Conferma Email */
+                  <div className="text-center py-4 space-y-3">
+                    <div className="w-16 h-16 mx-auto rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center shadow-inner">
+                      <Check size={32} strokeWidth={3} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <h4 className="font-black text-slate-900 text-lg uppercase">
+                        Ordine Inviato con Successo!
+                      </h4>
+                      <p className="text-slate-600 text-xs">
+                        Grazie <strong>{customer}</strong>, il tuo ordine è stato registrato su Firebase e inviato via email al reparto stampe.
+                      </p>
+                      <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                        <span className="px-3 py-1 bg-slate-100 border border-slate-200 rounded-lg text-[11px] font-mono font-bold text-slate-700">
+                          ID: {confirmedOrderId.slice(0, 10).toUpperCase()}
+                        </span>
+                        {emailSentInfo?.sent && (
+                          <span className="px-3 py-1 bg-emerald-50 border border-emerald-200 rounded-lg text-[11px] font-bold text-emerald-700 flex items-center gap-1">
+                            <Mail size={12} /> Email inviata ({emailSentInfo.attachmentsCount} PDF allegat{emailSentInfo.attachmentsCount === 1 ? 'o' : 'i'})
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="pt-3 space-y-2">
+                      <a
+                        href={getWhatsAppMessage()}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={() => {
+                          setIsConfirmModalOpen(false);
+                          setIsCartOpen(false);
+                        }}
+                        className={`w-full h-12 ${isOxford ? 'bg-amber-600 hover:bg-amber-500' : 'bg-emerald-600 hover:bg-emerald-500'} text-white font-bold text-sm uppercase rounded-xl flex items-center justify-center gap-2 shadow-md cursor-pointer`}
+                      >
+                        Invia Riepilogo anche su WhatsApp
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsConfirmModalOpen(false);
+                        }}
+                        className="w-full py-2.5 text-slate-500 hover:text-slate-800 text-xs font-bold uppercase cursor-pointer"
+                      >
+                        Chiudi
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  /* Form Inserimento Dati */
+                  <>
+                    {/* Riepilogo Veloce Spesa */}
+                    <div className="bg-slate-50 rounded-2xl p-3 border border-slate-200/90 flex justify-between items-center text-xs">
+                      <div>
+                        <span className="font-bold text-slate-500 uppercase text-[10px] block">Riepilogo:</span>
+                        <span className="font-black text-slate-800">
+                          {jobs.length} {jobs.length === 1 ? 'documento' : 'documenti'} • {deliveryMethod === 'spedizione_sda' ? 'Spedizione SDA' : 'Ritiro Ostuni'}
+                        </span>
+                      </div>
+                      <div className="text-right">
+                        <span className="font-bold text-slate-500 uppercase text-[10px] block">Totale:</span>
+                        <span className="font-black text-base text-emerald-700">
+                          {fmt(calculated.netTotal)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Stato File PDF Allegati all'Ordine */}
+                    <div className="bg-emerald-50/70 border border-emerald-200/80 rounded-2xl p-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-black uppercase text-emerald-900 flex items-center gap-1.5">
+                          <Paperclip size={13} className="text-emerald-700" />
+                          File PDF Allegati all'Email ({jobs.filter(j => !!j.file).length}/{jobs.length})
+                        </span>
+                      </div>
+                      <div className="space-y-1.5 max-h-28 overflow-y-auto">
+                        {jobs.map((j, i) => (
+                          <div key={j.id} className="flex items-center justify-between gap-2 text-[11px] bg-white/90 px-2.5 py-1.5 rounded-xl border border-emerald-100">
+                            <span className="font-bold text-slate-700 truncate">
+                              #{i + 1} {j.fileName || j.name}
+                            </span>
+                            {j.file ? (
+                              <span className="text-[10px] font-black text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md shrink-0">
+                                PDF Allegato ✓
+                              </span>
+                            ) : (
+                              <label className="text-[10px] font-black text-amber-700 bg-amber-100 hover:bg-amber-200 px-2 py-0.5 rounded-md shrink-0 cursor-pointer transition-colors">
+                                + Allega PDF
+                                <input
+                                  type="file"
+                                  accept=".pdf,application/pdf"
+                                  className="hidden"
+                                  onChange={e => {
+                                    const f = e.target.files?.[0];
+                                    if (f) {
+                                      setJobs(prev => prev.map(item => item.id === j.id ? { ...item, file: f, fileName: f.name } : item));
+                                    }
+                                  }}
+                                />
+                              </label>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Campi Input */}
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-[11px] font-black uppercase text-slate-700 mb-1">
+                          Nome e Cognome <span className="text-rose-500">*</span>
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="text"
+                            required
+                            value={customer}
+                            onChange={e => {
+                              setCustomer(e.target.value);
+                              if (confirmError) setConfirmError('');
+                            }}
+                            placeholder="Es. Mario Rossi"
+                            className="w-full h-12 pl-10 pr-3 bg-white border border-slate-300 rounded-xl text-sm font-bold text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-slate-800 focus:ring-1 focus:ring-slate-800"
+                          />
+                          <User size={18} className="absolute left-3 top-3.5 text-slate-400 pointer-events-none" />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-black uppercase text-slate-700 mb-1">
+                          Numero di Cellulare <span className="text-rose-500">*</span>
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="tel"
+                            required
+                            value={customerPhone}
+                            onChange={e => {
+                              setCustomerPhone(e.target.value);
+                              if (confirmError) setConfirmError('');
+                            }}
+                            placeholder="Es. 333 1234567"
+                            className="w-full h-12 pl-10 pr-3 bg-white border border-slate-300 rounded-xl text-sm font-bold text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-slate-800 focus:ring-1 focus:ring-slate-800"
+                          />
+                          <Phone size={18} className="absolute left-3 top-3.5 text-slate-400 pointer-events-none" />
+                        </div>
+                        <p className="text-[10px] text-slate-400 font-medium mt-1">
+                          Utilizzeremo il tuo cellulare per inviarti conferma e notifica di ordine pronto.
+                        </p>
+                      </div>
+
+                      {confirmError && (
+                        <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs font-semibold">
+                          {confirmError}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Bottone Invia / Conferma */}
+                    <div className="pt-2">
+                      <button
+                        type="button"
+                        disabled={isSavingOrder}
+                        onClick={async () => {
+                          if (!customer.trim()) {
+                            setConfirmError('Inserisci il tuo nome e cognome');
+                            return;
+                          }
+                          if (!customerPhone.trim() || customerPhone.trim().length < 6) {
+                            setConfirmError('Inserisci un numero di cellulare valido');
+                            return;
+                          }
+                          setConfirmError('');
+                          setIsSavingOrder(true);
+                          try {
+                            const newId = await saveToBackend(customer, customerPhone, true);
+                            setIsSavingOrder(false);
+                            setConfirmedOrderId(newId || 'CONF-OK');
+                          } catch (err) {
+                            setIsSavingOrder(false);
+                            setConfirmError('Errore durante l\'invio dell\'ordine. Riprova.');
+                          }
+                        }}
+                        className={`w-full h-13 ${isOxford ? 'bg-amber-600 hover:bg-amber-500' : 'bg-emerald-600 hover:bg-emerald-500'} text-white font-black text-xs sm:text-sm uppercase rounded-2xl flex items-center justify-center gap-2 shadow-lg transition-transform active:scale-[0.98] cursor-pointer disabled:opacity-50`}
+                      >
+                        {isSavingOrder ? (
+                          <>
+                            <Loader2 size={18} className="animate-spin" /> Invio Ordine e File PDF in corso...
+                          </>
+                        ) : (
+                          <>
+                            Conferma Ordine & Invia File <ArrowRight size={16} />
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Overlay elaborazione Batch PDF con calcolo rilegature consigliate */}
+      <AnimatePresence>
+        {isBatchUploading && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="bg-white rounded-3xl p-6 max-w-sm w-full text-center space-y-4 shadow-2xl border border-slate-150"
+            >
+              <div className={`w-14 h-14 mx-auto rounded-2xl flex items-center justify-center text-white ${isOxford ? 'bg-amber-600' : 'bg-emerald-600'} shadow-lg shadow-emerald-900/15`}>
+                <Loader2 size={28} className="animate-spin" />
+              </div>
+              <div className="space-y-1">
+                <h4 className="font-black text-slate-900 uppercase text-sm">
+                  Analisi PDF & Pagine in Corso
+                </h4>
+                <p className="text-slate-500 text-xs font-medium">
+                  {batchUploadProgress 
+                    ? `Elaborazione file ${batchUploadProgress.current} di ${batchUploadProgress.total}...`
+                    : 'Lettura dei file e calcolo delle pagine...'}
+                </p>
+                {batchUploadProgress?.fileName && (
+                  <p className="text-[11px] font-mono font-bold text-slate-700 bg-slate-100 px-2.5 py-1 rounded-lg truncate max-w-xs mx-auto border border-slate-200">
+                    {batchUploadProgress.fileName}
+                  </p>
+                )}
+              </div>
+              <div className="text-[10px] text-emerald-700 font-extrabold uppercase tracking-wider bg-emerald-50 py-1.5 px-3 rounded-full inline-block border border-emerald-200">
+                ✨ Applicazione rilegature consigliate...
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Modale dettagli tecnici singola rilegatura */}
       <AnimatePresence>
         {selectedBindingDetail && (
@@ -912,8 +1833,8 @@ const App: React.FC = () => {
                 </p>
               </div>
 
-              {/* Promo Banner Oxford vs Standard */}
-              {isOxford ? (
+              {/* Promo Banner Oxford (se attivo) */}
+              {isOxford && (
                 <div className="w-full mt-5 p-4 bg-gradient-to-br from-amber-50 to-orange-50/80 border border-amber-300/80 rounded-3xl text-left space-y-2">
                   <div className="flex items-center gap-2 text-amber-900">
                     <Tag size={16} className="text-amber-700" />
@@ -936,26 +1857,31 @@ const App: React.FC = () => {
                     </li>
                   </ul>
                 </div>
-              ) : (
-                <div className="w-full mt-6 p-3.5 bg-gradient-to-r from-emerald-500/10 via-emerald-500/15 to-emerald-500/10 border border-emerald-200 rounded-2xl flex items-center gap-3 text-left">
-                  <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-md">
-                    <Gift size={20} className="animate-bounce" />
-                  </div>
-                  <div className="text-xs">
-                    <p className="font-black text-emerald-900 uppercase tracking-wide text-[11px]">Promo Rilegatura Gratuita</p>
-                    <p className="text-emerald-700 font-medium text-[11px]">1 rilegatura in omaggio ogni € 15 di stampe per tutti i tipi di rilegatura!</p>
-                  </div>
-                </div>
               )}
 
-              <div className="w-full mt-6">
-                <button 
-                  onClick={() => {
-                    setTimeout(() => {
-                      document.getElementById('bindings-reel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                    }, 100);
+              <div className="w-full mt-6 space-y-3">
+                {/* Input file multiplo nascosto per Caricamento Rapido */}
+                <input 
+                  type="file"
+                  id="batch-landing-upload-input"
+                  multiple
+                  accept="application/pdf"
+                  className="hidden"
+                  onChange={e => {
+                    if (e.target.files && e.target.files.length > 0) {
+                      handleBatchUpload(e.target.files);
+                      e.target.value = '';
+                    }
                   }}
-                  className={`relative overflow-hidden w-full h-14 ${isOxford ? 'bg-amber-600 hover:bg-amber-500 shadow-amber-900/20' : 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/20'} text-white rounded-2xl font-black text-base flex items-center justify-center gap-2.5 shadow-lg active:scale-[0.98] transition-all cursor-pointer`}
+                />
+
+                {/* TASTO GEMELLO: Carica i tuoi File con Carrello Diretto & Rilegatura Consigliata */}
+                <button 
+                  type="button"
+                  onClick={() => {
+                    document.getElementById('batch-landing-upload-input')?.click();
+                  }}
+                  className={`relative overflow-hidden w-full py-3.5 px-4 ${isOxford ? 'bg-amber-600 hover:bg-amber-500 shadow-amber-900/20' : 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/20'} text-white rounded-2xl font-black shadow-lg active:scale-[0.98] transition-all cursor-pointer flex flex-col items-center justify-center`}
                 >
                   <motion.div
                     className="absolute inset-0 w-[200%] h-full bg-gradient-to-r from-transparent via-white/30 to-transparent -skew-x-12 pointer-events-none"
@@ -963,9 +1889,26 @@ const App: React.FC = () => {
                     animate={{ x: '100%' }}
                     transition={{ repeat: Infinity, duration: 1.8, ease: 'linear', repeatDelay: 1 }}
                   />
-                  <span className="relative z-10 flex items-center gap-2">
-                    Inizia Configurazione <ArrowDown size={18} />
+                  <span className="relative z-10 flex items-center gap-2 text-base leading-tight">
+                    <FileUp size={20} className="animate-pulse" />
+                    Carica i tuoi File <Sparkles size={16} />
                   </span>
+                  <span className="relative z-10 text-[11px] font-medium tracking-normal text-white/90 mt-0.5">
+                    ( preventivo automatico )
+                  </span>
+                </button>
+
+                {/* TASTO GEMELLO: Inizia Configurazione */}
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setTimeout(() => {
+                      document.getElementById('bindings-reel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }, 100);
+                  }}
+                  className="w-full h-12 bg-white hover:bg-slate-50 text-slate-800 border-2 border-slate-200/90 rounded-2xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-xs active:scale-[0.98] transition-all cursor-pointer"
+                >
+                  Inizia Configurazione a Mano <ArrowDown size={16} className="text-slate-500" />
                 </button>
               </div>
             </div>
@@ -1037,6 +1980,21 @@ const App: React.FC = () => {
                           {b.description}
                         </p>
                       </div>
+
+                      {/* Promo Rilegatura Gratuita per rilegature a pagamento (plastica, metallo, brossura, opuscolo) */}
+                      {['plastic', 'metal', 'thermal', 'stitch'].includes(b.id) && (
+                        <div className="p-2.5 bg-gradient-to-r from-emerald-500/10 via-emerald-500/15 to-emerald-500/10 border border-emerald-200/90 rounded-2xl flex items-center gap-2.5 text-left">
+                          <div className="w-7 h-7 rounded-lg bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                            <Gift size={15} className="animate-bounce" />
+                          </div>
+                          <div className="text-[10px] leading-tight">
+                            <p className="font-black text-emerald-900 uppercase tracking-wide text-[10px]">Promo Rilegatura Gratuita</p>
+                            <p className="text-emerald-700 font-medium text-[10px] mt-0.5 leading-snug">
+                              1 rilegatura in omaggio ogni € 15 di stampe per tutti i tipi di rilegatura!
+                            </p>
+                          </div>
+                        </div>
+                      )}
 
                       <div className="space-y-2 pt-2 border-t border-gray-100">
                         <button
@@ -1300,64 +2258,6 @@ const App: React.FC = () => {
                   );
                 })}
 
-                {/* Scelta Modalità di Consegna (Ritiro in sede o Spedizione SDA) */}
-                <div className="bg-white rounded-4xl p-5 card-shadow space-y-3 border border-gray-150">
-                  <span className="text-[11px] font-black text-slate-700 uppercase tracking-wider block">
-                    Modalità di Ricezione
-                  </span>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setDeliveryMethod('spedizione_sda')}
-                      className={`p-3.5 rounded-2xl border text-left flex items-start gap-3 transition-all cursor-pointer ${
-                        deliveryMethod === 'spedizione_sda'
-                          ? 'border-emerald-600 bg-emerald-50/70 ring-1 ring-emerald-600'
-                          : 'border-gray-200 bg-gray-50/50 hover:bg-gray-50'
-                      }`}
-                    >
-                      <Truck className={`mt-0.5 shrink-0 ${deliveryMethod === 'spedizione_sda' ? 'text-emerald-600' : 'text-gray-400'}`} size={20} />
-                      <div className="space-y-0.5">
-                        <p className="font-black text-xs text-gray-900 uppercase">Spedizione SDA</p>
-                        <p className="text-[11px] text-gray-500">
-                          {isOxford && calculated.freeShippingInConvention ? (
-                            <span className="text-emerald-700 font-bold">GRATIS (Promo &gt; 60 €)</span>
-                          ) : (
-                            `€ ${SDA_SHIPPING_PRICE.toFixed(2)} con corriere espresso`
-                          )}
-                        </p>
-                      </div>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setDeliveryMethod('ritiro')}
-                      className={`p-3.5 rounded-2xl border text-left flex items-start gap-3 transition-all cursor-pointer ${
-                        deliveryMethod === 'ritiro'
-                          ? 'border-emerald-600 bg-emerald-50/70 ring-1 ring-emerald-600'
-                          : 'border-gray-200 bg-gray-50/50 hover:bg-gray-50'
-                      }`}
-                    >
-                      <Store className={`mt-0.5 shrink-0 ${deliveryMethod === 'ritiro' ? 'text-emerald-600' : 'text-gray-400'}`} size={20} />
-                      <div className="space-y-0.5">
-                        <p className="font-black text-xs text-gray-900 uppercase">Ritiro in sede</p>
-                        <p className="text-[11px] text-emerald-700 font-bold">Gratuito • Ostuni</p>
-                      </div>
-                    </button>
-                  </div>
-
-                  {deliveryMethod === 'spedizione_sda' && (
-                    <div className="pt-2">
-                      <input 
-                        type="text" 
-                        value={shippingAddress}
-                        onChange={e => setShippingAddress(e.target.value)}
-                        placeholder="Indirizzo e CAP per la spedizione SDA (facoltativo qui)"
-                        className="w-full h-11 px-3.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-medium text-gray-800 focus:outline-none focus:border-brandBlue"
-                      />
-                    </div>
-                  )}
-                </div>
-
                 {/* Pulsante aggiungi altro documento */}
                 <button 
                   onClick={() => {
@@ -1412,6 +2312,16 @@ const App: React.FC = () => {
                   <span className="relative z-10 flex items-center gap-3">
                     Vai al Riepilogo e Ordine <ArrowRight size={20} />
                   </span>
+                </button>
+
+                {/* Pulsante Apri Pagina Riassuntiva (Carrello) */}
+                <button
+                  type="button"
+                  onClick={() => setIsCartOpen(true)}
+                  className="w-full h-12 bg-white hover:bg-slate-100 text-slate-800 font-black text-xs uppercase rounded-2xl border border-slate-200 flex items-center justify-center gap-2 cursor-pointer shadow-xs transition-colors mt-2"
+                >
+                  <ShoppingCart size={16} className="text-slate-700" />
+                  Vedi Carrello Riassuntivo ({jobs.length})
                 </button>
               </div>
             ) : (
@@ -1545,16 +2455,30 @@ const App: React.FC = () => {
                 <span className="text-3xl font-black text-emerald-700">{fmt(calculated.netTotal)}</span>
               </div>
 
-              {/* Pulsanti di Azione: WhatsApp & Download */}
+              {/* Pulsanti di Azione: Conferma Ordine + Email, WhatsApp & Download */}
               <div className="space-y-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfirmedOrderId(null);
+                    setEmailSentInfo(null);
+                    setConfirmError('');
+                    setIsConfirmModalOpen(true);
+                  }}
+                  className={`relative overflow-hidden w-full h-14 ${isOxford ? 'bg-amber-600 hover:bg-amber-500' : 'bg-emerald-600 hover:bg-emerald-500'} text-white rounded-2xl font-black text-sm uppercase flex items-center justify-center gap-2 transition-all btn-touch cursor-pointer shadow-xl`}
+                >
+                  <Mail size={18} />
+                  Conferma Ordine & Invia File <ArrowRight size={16} />
+                </button>
+
                 <a 
                   onClick={() => saveToBackend()}
                   href={getWhatsAppMessage()}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className={`relative overflow-hidden w-full h-15 ${isOxford ? 'bg-amber-600 hover:bg-amber-500' : 'bg-emerald-600 hover:bg-emerald-500'} text-white rounded-2xl font-bold text-base flex items-center justify-center gap-2.5 transition-all btn-touch cursor-pointer shadow-xl`}
+                  className="relative overflow-hidden w-full h-12 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-2xl font-bold text-xs uppercase flex items-center justify-center gap-2 transition-all btn-touch cursor-pointer"
                 >
-                  <svg className="w-5 h-5 fill-current text-white" viewBox="0 0 24 24">
+                  <svg className="w-4 h-4 fill-current text-emerald-600" viewBox="0 0 24 24">
                     <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.724-1.455L0 24zm6.59-4.846c1.6.95 3.188 1.449 4.825 1.451 5.436 0 9.86-4.42 9.864-9.864.002-2.637-1.03-5.114-2.906-6.99C16.546 1.866 14.072 1.83 11.43 1.83c-5.44 0-9.866 4.418-9.87 9.864 0 1.902.504 3.75 1.464 5.362l-.993 3.628 3.717-.975zm11.167-7.464c-.309-.155-1.829-.902-2.107-1.002-.278-.1-.48-.15-.68.15-.2.3-.775.976-.95 1.176-.175.2-.351.225-.66.07-.309-.155-1.305-.48-2.485-1.534-.918-.818-1.538-1.829-1.718-2.137-.18-.31-.02-.477.135-.632.14-.139.31-.35.465-.525.155-.175.206-.3.309-.5.103-.2.051-.375-.025-.525-.077-.15-1.002-2.414-1.378-3.32-.367-.88-.74-.76-.102-.76-.2-.05-.401-.05-.575.125-.175.175-.68.665-.68 1.62s.696 1.874.794 2.005c.1.13 1.369 2.091 3.316 2.93.463.2.824.32 1.107.41.466.147.89.126 1.226.076.375-.056 1.143-.467 1.302-.917.16-.45.16-.837.113-.917-.047-.08-.175-.13-.484-.285z" />
                   </svg>
                   Invia Preventivo su WhatsApp

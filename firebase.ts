@@ -36,6 +36,8 @@ export interface PreventivoItem {
 
 export interface PreventivoData {
   cliente: string;
+  telefono: string;
+  indirizzoSpedizione?: string;
   totale: number;
   totaleLordo?: number;
   totaleScontoRilegature?: number;

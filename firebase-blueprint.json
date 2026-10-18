@@ -16,7 +16,15 @@
         },
         "cliente": {
           "type": "string",
-          "description": "Nome o riferimento cliente se specificato"
+          "description": "Nome o riferimento cliente"
+        },
+        "telefono": {
+          "type": "string",
+          "description": "Numero di cellulare del cliente per conferma ordine"
+        },
+        "indirizzoSpedizione": {
+          "type": "string",
+          "description": "Indirizzo di spedizione se SDA"
         },
         "totale": {
           "type": "number",
