@@ -5,12 +5,11 @@ import {
   Trash2, Loader2, FileScan, 
   Plus, Minus, ArrowRight, ArrowDown, ArrowUp, 
   CheckCircle2, X, Download, BookOpen, ChevronLeft, ChevronRight,
-  Gift, Check, Truck, Store, Tag, Sparkles, AlertTriangle, HelpCircle
+  Gift, Check, Truck, Store, Tag, Sparkles
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   BINDING_TYPES, 
-  BINDING_LIMITS_TIPS,
   PRICING_CONFIG, 
   WA_PHONE, 
   LOGO_URL, 
@@ -130,7 +129,6 @@ const App: React.FC = () => {
   const [analyzingId, setAnalyzingId] = useState<string | null>(null);
   const [selectedBindingDetail, setSelectedBindingDetail] = useState<BindingType | null>(null);
   const [activeEditingJobId, setActiveEditingJobId] = useState<string | null>(null);
-  const [showLimitsModal, setShowLimitsModal] = useState(false);
   const [showSavedToast, setShowSavedToast] = useState(false);
 
   const carouselRef = useRef<HTMLDivElement>(null);
@@ -166,9 +164,6 @@ const App: React.FC = () => {
       const unitBindPrice = binding.basePrice + (totalPages * binding.perPagePrice);
       const jobBindCost = unitBindPrice * copies;
 
-      // Verifica limite minimo 30 pagine
-      const isUnder30Issue = totalPages > 0 && totalPages < 30 && !!binding.notUnder30;
-
       totalPrintGross += jobPrintCost;
       totalBindGross += jobBindCost;
 
@@ -184,8 +179,7 @@ const App: React.FC = () => {
         singleCopyPrintCost,
         jobPrintCost,
         unitBindPrice,
-        jobBindCost,
-        isUnder30Issue
+        jobBindCost
       };
     });
 
@@ -779,98 +773,7 @@ const App: React.FC = () => {
   return (
     <div className="max-w-md mx-auto min-h-screen flex flex-col p-4 sm:p-6 space-y-6">
       
-      {/* Modale TABELLA LIMITI E CONSIGLI RILEGATURE */}
-      <AnimatePresence>
-        {showLimitsModal && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
-            onClick={() => setShowLimitsModal(false)}
-          >
-            <motion.div 
-              initial={{ scale: 0.95, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.95, y: 20 }}
-              className="bg-white w-full max-w-lg rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]"
-              onClick={e => e.stopPropagation()}
-            >
-              <div className="p-5 bg-slate-900 text-white flex justify-between items-center shrink-0">
-                <div className="flex items-center gap-2">
-                  <BookOpen size={20} className="text-amber-400" />
-                  <h3 className="font-black text-sm uppercase tracking-wide">
-                    Tabella Limiti e Consigli Rilegature
-                  </h3>
-                </div>
-                <button 
-                  onClick={() => setShowLimitsModal(false)}
-                  className="text-white/60 hover:text-white p-1 rounded-full cursor-pointer"
-                  aria-label="Chiudi"
-                >
-                  <X size={18} />
-                </button>
-              </div>
-
-              {/* Banner Evidenziato Regola Chiave */}
-              <div className="bg-amber-50 border-b border-amber-200 p-3.5 text-xs text-amber-950 font-bold flex items-start gap-2.5">
-                <AlertTriangle className="text-amber-600 shrink-0 mt-0.5" size={18} />
-                <div className="leading-snug">
-                  <span className="font-black uppercase text-amber-900 block text-[11px]">Regola fondamentale spessore:</span>
-                  <strong>Spirale in metallo, in plastica e brossura: non disponibili sotto le 30 pagine</strong> (per fascicoli brevi sotto le 30 pagine sono disponibili solo <strong>Opuscolo Spillato</strong> e <strong>Doppia Spilla Laterale</strong>).
-                </div>
-              </div>
-
-              {/* Tabella dettagliata */}
-              <div className="p-4 overflow-y-auto space-y-3">
-                <div className="divide-y divide-gray-150 border border-gray-200 rounded-2xl overflow-hidden bg-white text-xs">
-                  {BINDING_LIMITS_TIPS.map((item, idx) => (
-                    <div key={idx} className="p-3.5 space-y-1.5 hover:bg-gray-50/60 transition-colors">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-black text-slate-900 uppercase text-xs">
-                          {item.title}
-                        </span>
-                        <div className="flex items-center gap-1.5">
-                          <span className={`px-2 py-0.5 rounded-md font-black text-[10px] uppercase ${
-                            item.isAvailableUnder30 
-                              ? 'bg-emerald-100 text-emerald-800' 
-                              : 'bg-rose-100 text-rose-800'
-                          }`}>
-                            {item.isAvailableUnder30 ? '✅ Anche < 30 pag' : '⚠️ Min. 30 pag'}
-                          </span>
-                          <span className="bg-slate-100 px-2 py-0.5 rounded-md font-bold text-slate-700 text-[10px]">
-                            {item.rangeText}
-                          </span>
-                        </div>
-                      </div>
-
-                      <p className="text-[11px] text-gray-600 leading-normal font-medium">
-                        {item.consiglio}
-                      </p>
-
-                      <div className="text-[10px] text-slate-400 font-bold italic pt-0.5">
-                        {item.note}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="p-4 bg-gray-50 border-t border-gray-100 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setShowLimitsModal(false)}
-                  className="w-full h-11 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-black text-xs uppercase cursor-pointer"
-                >
-                  Ho capito, chiudi guida
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* 2. Modale dettagli tecnici singola rilegatura */}
+      {/* Modale dettagli tecnici singola rilegatura */}
       <AnimatePresence>
         {selectedBindingDetail && (
           <motion.div 
@@ -901,11 +804,6 @@ const App: React.FC = () => {
                 >
                   <X size={18} />
                 </button>
-                {selectedBindingDetail.badge && (
-                  <span className="absolute top-3 left-3 bg-brandBlue text-white text-[10px] font-black uppercase tracking-wider px-3 py-1 rounded-full shadow">
-                    {selectedBindingDetail.badge}
-                  </span>
-                )}
               </div>
 
               <div className="p-6 space-y-4 overflow-y-auto">
@@ -918,25 +816,6 @@ const App: React.FC = () => {
                       ? 'Gratuita per ordini oltre 60 € già scontati' 
                       : selectedBindingDetail.subtitle}
                   </p>
-                </div>
-
-                {/* Box Limiti Pagine */}
-                <div className={`p-3 rounded-2xl border text-xs font-bold ${
-                  selectedBindingDetail.notUnder30 
-                    ? 'bg-amber-50 border-amber-200 text-amber-900' 
-                    : 'bg-emerald-50 border-emerald-200 text-emerald-900'
-                }`}>
-                  {selectedBindingDetail.notUnder30 ? (
-                    <div className="flex items-center gap-2">
-                      <AlertTriangle size={16} className="text-amber-600 shrink-0" />
-                      <span><strong>Minimo 30 pagine:</strong> Non disponibile per fascicoli sotto le 30 facciate.</span>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2">
-                      <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
-                      <span><strong>Disponibile anche sotto le 30 pagine</strong> (da {selectedBindingDetail.minPages} a {selectedBindingDetail.maxPages} facciate).</span>
-                    </div>
-                  )}
                 </div>
 
                 <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-150 space-y-2 text-xs">
@@ -1136,11 +1015,6 @@ const App: React.FC = () => {
                         className="w-full h-full object-cover"
                         loading="lazy"
                       />
-                      {b.badge && (
-                        <div className={`absolute top-3 left-3 ${b.notUnder30 ? 'bg-amber-600' : 'bg-brandBlue'} backdrop-blur-md text-white text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full shadow-md`}>
-                          {b.badge}
-                        </div>
-                      )}
                       <div className="absolute bottom-2 right-2 bg-black/70 backdrop-blur-md px-2.5 py-1 rounded-full border border-white/20 text-white text-[9px] font-black uppercase">
                         {isOxford ? 'Sconto 20% + Gratis >60€' : b.priceInfo}
                       </div>
@@ -1387,49 +1261,6 @@ const App: React.FC = () => {
                           </div>
                         </div>
                       </div>
-
-                      {/* ALERT SOTTO LE 30 PAGINE - CON TASTO CONSULTA GUIDA (ESATTAMENTE COME DA IMMAGINE) */}
-                      {detail?.isUnder30Issue && (
-                        <motion.div 
-                          initial={{ opacity: 0, scale: 0.96 }}
-                          animate={{ opacity: 1, scale: 1 }}
-                          className="bg-[#FFFBEB] border-2 border-[#F59E0B] rounded-3xl p-5 space-y-3.5 text-gray-900 shadow-md"
-                        >
-                          <div className="flex items-center gap-2.5 text-[#B45309] font-black uppercase text-xs tracking-wide">
-                            <AlertTriangle size={22} className="text-[#D97706] shrink-0" />
-                            <span>ATTENZIONE: LIMITE MINIMO 30 PAGINE</span>
-                          </div>
-                          
-                          <p className="text-xs leading-relaxed text-gray-800 font-medium">
-                            La <strong className="font-extrabold text-gray-900">{currentBinding.title}</strong> non è disponibile sotto le 30 pagine (questo fascicolo ne ha <strong className="font-extrabold text-gray-900">{detail.totalPages}</strong>). Sotto le 30 pagine puoi scegliere l'<strong className="font-extrabold text-gray-900">Opuscolo Spillato</strong> o la <strong className="font-extrabold text-gray-900">Doppia Spilla Laterale</strong>.
-                          </p>
-
-                          <div className="flex items-center gap-2.5 pt-1 flex-wrap">
-                            <button
-                              type="button"
-                              onClick={() => setJobs(prev => prev.map(x => x.id === j.id ? { ...x, bindingId: 'stitch' } : x))}
-                              className="px-4 py-2.5 bg-[#C67100] hover:bg-[#A85E00] text-white font-extrabold text-xs uppercase rounded-xl shadow transition-transform active:scale-95 cursor-pointer"
-                            >
-                              PASSA A OPUSCOLO SPILLATO
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setJobs(prev => prev.map(x => x.id === j.id ? { ...x, bindingId: 'staple' } : x))}
-                              className="px-4 py-2.5 bg-[#1E293B] hover:bg-[#0F172A] text-white font-extrabold text-xs uppercase rounded-xl shadow transition-transform active:scale-95 cursor-pointer"
-                            >
-                              PASSA A SPILLA (GRATIS)
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setShowLimitsModal(true)}
-                              className="px-4 py-2.5 bg-white hover:bg-amber-100/60 text-[#92400E] border border-[#F59E0B] font-extrabold text-xs uppercase rounded-xl shadow-sm transition-transform active:scale-95 cursor-pointer flex items-center gap-1.5"
-                            >
-                              <HelpCircle size={15} className="text-[#D97706]" />
-                              CONSULTA GUIDA
-                            </button>
-                          </div>
-                        </motion.div>
-                      )}
 
                       {/* Box promozionale OMAGGIO per fascicolo */}
                       {detail && (

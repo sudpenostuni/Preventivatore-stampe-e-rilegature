@@ -10,8 +10,6 @@ export interface BindingType {
   minPages: number;
   maxPages: number;
   imageUrl: string;
-  badge?: string;
-  notUnder30?: boolean;
 }
 
 export const BINDING_TYPES: BindingType[] = [
@@ -20,75 +18,65 @@ export const BINDING_TYPES: BindingType[] = [
     title: "Spirale in Plastica",
     subtitle: "in omaggio una ogni 15 euro di stampe",
     description: "L'opzione più versatile e amata dagli studenti. Perché sceglierla: Permette di aggiungere o rimuovere fogli in un secondo momento e ha un’apertura a 180° comodissima per studiare.",
-    priceInfo: "da € 2,50 (30 - 600 pag)",
+    priceInfo: "da € 2,50",
     basePrice: 2.50,
     perPagePrice: 0.01,
     promoThreshold: 15,
-    minPages: 30,
+    minPages: 1,
     maxPages: 600,
-    imageUrl: "https://www.mondocopia.it/cms/contenuto/c_234/img/spirale-plastica.jpg",
-    badge: "Min. 30 pag.",
-    notUnder30: true
+    imageUrl: "https://www.mondocopia.it/cms/contenuto/c_234/img/spirale-plastica.jpg"
   },
   {
     id: "metal",
     title: "Anelli Metallici",
     subtitle: "in omaggio una ogni 15 euro di stampe",
     description: "Stabile, professionale e moderna. Perché sceglierla: Resistente e dal design pulito, è perfetta per presentazioni aziendali, calendari o portfolio che devono durare nel tempo.",
-    priceInfo: "da € 3,50 (30 - 450 pag)",
+    priceInfo: "da € 3,50",
     basePrice: 3.50,
     perPagePrice: 0.01,
     promoThreshold: 15,
-    minPages: 30,
+    minPages: 1,
     maxPages: 450,
-    imageUrl: "https://transform.octanecdn.com/crop/1400x984/https://octanecdn.com/colorvisionprintingcom/colorvisionprintingcom_335300815.jpg",
-    badge: "Min. 30 pag.",
-    notUnder30: true
+    imageUrl: "https://transform.octanecdn.com/crop/1400x984/https://octanecdn.com/colorvisionprintingcom/colorvisionprintingcom_335300815.jpg"
   },
   {
     id: "thermal",
     title: "Brossura a Caldo",
     subtitle: "in omaggio una ogni 15 euro di stampe",
     description: "L’effetto \"libro\" che cercavi. Perché sceglierla: È la rilegatura per eccellenza per tesi di laurea e volumi importanti. Una finitura impeccabile e una tenuta ultra-resistente per un risultato da libreria.",
-    priceInfo: "da € 5,00 (30 - 500 pag)",
+    priceInfo: "da € 5,00",
     basePrice: 5.00,
     perPagePrice: 0.01,
     promoThreshold: 15,
-    minPages: 30,
+    minPages: 1,
     maxPages: 500,
-    imageUrl: "https://www.agfsolutions.it/wp-content/uploads/2021/08/Rilegatura-brossura-cucita-filo-refe.jpg.webp",
-    badge: "Min. 30 pag.",
-    notUnder30: true
+    imageUrl: "https://www.agfsolutions.it/wp-content/uploads/2021/08/Rilegatura-brossura-cucita-filo-refe.jpg.webp"
   },
   {
     id: "stitch",
     title: "Opuscolo Spillato",
     subtitle: "in omaggio una ogni 15 euro di stampe",
     description: "Sottile e funzionale, trasforma i tuoi fogli in un vero libretto con piega centrale e doppie graffette. Ideale per dispense brevi, cataloghi o programmi.",
-    priceInfo: "da € 1,50 (4 - 60 pag)",
+    priceInfo: "da € 1,50",
     basePrice: 1.50,
     perPagePrice: 0.00,
     promoThreshold: 15,
-    minPages: 4,
+    minPages: 1,
     maxPages: 60,
-    imageUrl: "https://static.multigrafica.net/front/img/slider/stampa-cataloghi-spillati-slider-01.webp",
-    badge: "Anche < 30 pag.",
-    notUnder30: false
+    imageUrl: "https://static.multigrafica.net/front/img/slider/stampa-cataloghi-spillati-slider-01.webp"
   },
   {
     id: "staple",
     title: "Doppia Spilla Laterale",
     subtitle: "Semplice e gratuita",
     description: "Semplice, rapida e gratuita. Perfetta per fascicoli da studio, dispense quotidiane e fogli di consultazione veloce.",
-    priceInfo: "€ 0,00 (2 - 150 pag)",
+    priceInfo: "€ 0,00",
     basePrice: 0.00,
     perPagePrice: 0.00,
     promoThreshold: 0,
-    minPages: 2,
+    minPages: 1,
     maxPages: 150,
-    imageUrl: "https://printo-s3.dietpixels.net/cloudinary/res/dxivtqnri/image/upload/Document-printing/Side-Staple-Binding/1649412507.jpg?quality=70&format=webp&w=1080",
-    badge: "Anche < 30 pag.",
-    notUnder30: false
+    imageUrl: "https://printo-s3.dietpixels.net/cloudinary/res/dxivtqnri/image/upload/Document-printing/Side-Staple-Binding/1649412507.jpg?quality=70&format=webp&w=1080"
   },
   {
     id: "none",
@@ -101,83 +89,7 @@ export const BINDING_TYPES: BindingType[] = [
     promoThreshold: 0,
     minPages: 1,
     maxPages: 9999,
-    imageUrl: "https://static.multigrafica.net/front/img/slider/stampa-fascicoli-copiativi-slider-01.webp",
-    badge: "Fogli Sciolti",
-    notUnder30: false
-  }
-];
-
-export interface BindingLimitTip {
-  title: string;
-  minPages: number;
-  maxPages: number;
-  badge: string;
-  rangeText: string;
-  consiglio: string;
-  note: string;
-  isAvailableUnder30: boolean;
-}
-
-export const BINDING_LIMITS_TIPS: BindingLimitTip[] = [
-  {
-    title: "Spirale in Plastica",
-    minPages: 30,
-    maxPages: 600,
-    badge: "Minimo 30 pag.",
-    rangeText: "30 – 600 pagine",
-    consiglio: "Apertura a 180° ideale per lo studio e possibilità di aggiungere/rimuovere fogli.",
-    note: "Non disponibile sotto le 30 pagine.",
-    isAvailableUnder30: false
-  },
-  {
-    title: "Anelli Metallici",
-    minPages: 30,
-    maxPages: 450,
-    badge: "Minimo 30 pag.",
-    rangeText: "30 – 450 pagine",
-    consiglio: "Finitura moderna e professionale per relazioni, calendari, tesi e cataloghi.",
-    note: "Non disponibile sotto le 30 pagine.",
-    isAvailableUnder30: false
-  },
-  {
-    title: "Brossura a Caldo",
-    minPages: 30,
-    maxPages: 500,
-    badge: "Minimo 30 pag.",
-    rangeText: "30 – 500 pagine",
-    consiglio: "Effetto libro con dorso fresato e incollato per volumi importanti e tesi.",
-    note: "Non disponibile sotto le 30 pagine.",
-    isAvailableUnder30: false
-  },
-  {
-    title: "Opuscolo Spillato",
-    minPages: 4,
-    maxPages: 60,
-    badge: "Anche < 30 pag.",
-    rangeText: "4 – 60 pagine",
-    consiglio: "Consigliato per documenti brevi, fascicoli informativi e libretti (pagine multiple di 4).",
-    note: "Disponibile e consigliato sotto le 30 pagine.",
-    isAvailableUnder30: true
-  },
-  {
-    title: "Doppia Spilla Laterale",
-    minPages: 2,
-    maxPages: 150,
-    badge: "Anche < 30 pag.",
-    rangeText: "2 – 150 pagine",
-    consiglio: "Pratico ed economico per dispense veloci e appunti da consultazione.",
-    note: "Disponibile sotto le 30 pagine (gratuita).",
-    isAvailableUnder30: true
-  },
-  {
-    title: "Nessuna Rilegatura",
-    minPages: 1,
-    maxPages: 9999,
-    badge: "Tutte le pagine",
-    rangeText: "1 – illimitate",
-    consiglio: "Stampe sciolte ordinate e fascicolate senza punti metallici o foratura.",
-    note: "Sempre disponibile.",
-    isAvailableUnder30: true
+    imageUrl: "https://static.multigrafica.net/front/img/slider/stampa-fascicoli-copiativi-slider-01.webp"
   }
 ];
 
