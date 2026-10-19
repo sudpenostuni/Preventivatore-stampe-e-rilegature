@@ -574,61 +574,87 @@ const App: React.FC = () => {
 
     if (sendEmail) {
       try {
-        const formData = new FormData();
-        const orderPayload = {
-          orderId: createdId || `ORD-${Date.now()}`,
-          cliente: finalClient,
-          telefono: finalPhone,
-          indirizzoSpedizione: deliveryMethod === 'spedizione_sda' ? shippingAddress.trim() : undefined,
-          totale: calculated.netTotal,
-          totaleLordo: calculated.grossTotal,
-          totaleScontoRilegature: calculated.totalDiscounts,
-          scontoConvenzione: calculated.totalConventionDiscount,
-          isConvenzione: isOxford,
-          tipoConsegna: deliveryMethod,
-          costoSpedizione: calculated.shippingCost,
-          copieTotali: calculated.totalCopies,
-          items: calculated.jobDetails.map(d => ({
-            id: d.job.id,
-            name: d.job.name,
-            fileName: d.job.fileName,
-            rilegatura: d.binding.title,
-            isOmaggio: !!d.isOmaggio,
-            bwPages: d.b,
-            colorPages: d.c,
-            isBwOnly: !!d.isJobBw,
-            cps: d.copies,
-            costoSubtotale: d.jobFinalCost
-          }))
+        const buildFormData = () => {
+          const fd = new FormData();
+          const orderPayload = {
+            orderId: createdId || `ORD-${Date.now()}`,
+            cliente: finalClient,
+            telefono: finalPhone,
+            indirizzoSpedizione: deliveryMethod === 'spedizione_sda' ? shippingAddress.trim() : undefined,
+            totale: calculated.netTotal,
+            totaleLordo: calculated.grossTotal,
+            totaleScontoRilegature: calculated.totalDiscounts,
+            scontoConvenzione: calculated.totalConventionDiscount,
+            isConvenzione: isOxford,
+            tipoConsegna: deliveryMethod,
+            costoSpedizione: calculated.shippingCost,
+            copieTotali: calculated.totalCopies,
+            items: calculated.jobDetails.map(d => ({
+              id: d.job.id,
+              name: d.job.name,
+              fileName: d.job.fileName,
+              rilegatura: d.binding.title,
+              isOmaggio: !!d.isOmaggio,
+              bwPages: d.b,
+              colorPages: d.c,
+              isBwOnly: !!d.isJobBw,
+              cps: d.copies,
+              costoSubtotale: d.jobFinalCost
+            }))
+          };
+
+          fd.append('orderData', JSON.stringify(orderPayload));
+
+          let count = 0;
+          for (const job of jobs) {
+            if (job.file) {
+              fd.append('files', job.file, job.fileName || job.file.name);
+              count++;
+            }
+          }
+          return { fd, count };
         };
 
-        formData.append('orderData', JSON.stringify(orderPayload));
+        // Pre-warm della sessione proxy per evitare che una 302 di rinnovo cookie trasformi la POST in GET
+        await fetch('/api/health', {
+          method: 'GET',
+          credentials: 'include',
+          cache: 'no-store'
+        }).catch(() => null);
 
-        let filesCount = 0;
-        for (const job of jobs) {
-          if (job.file) {
-            formData.append('files', job.file, job.fileName || job.file.name);
-            filesCount++;
-          }
-        }
-
-        const emailRes = await fetch('/api/send-order-email', {
+        let { fd, count: filesCount } = buildFormData();
+        let emailRes = await fetch('/api/send-order-email', {
           method: 'POST',
-          body: formData
+          credentials: 'include',
+          body: fd
         });
 
-        if (emailRes.ok) {
+        let contentType = emailRes.headers.get('content-type') || '';
+
+        // Se il proxy ha intercettato la richiesta con un redirect 302 (status 409 o risposta HTML),
+        // ora la cache auth è calda e ripetiamo immediatamente la POST.
+        if (emailRes.status === 409 || !contentType.includes('application/json')) {
+          const retryData = buildFormData();
+          filesCount = retryData.count;
+          emailRes = await fetch('/api/send-order-email', {
+            method: 'POST',
+            credentials: 'include',
+            body: retryData.fd
+          });
+          contentType = emailRes.headers.get('content-type') || '';
+        }
+
+        if (emailRes.ok && contentType.includes('application/json')) {
           const emailJson = await emailRes.json();
           setEmailSentInfo({
             sent: true,
             attachmentsCount: emailJson.attachmentsCount ?? filesCount
           });
         } else {
-          console.error('Errore invio email dal server:', await emailRes.text());
           setEmailSentInfo({ sent: false, attachmentsCount: 0 });
         }
       } catch (emailErr) {
-        console.error('Errore richiesta invio email:', emailErr);
+        console.warn('Avviso invio email:', emailErr);
         setEmailSentInfo({ sent: false, attachmentsCount: 0 });
       }
     }
@@ -1360,9 +1386,9 @@ const App: React.FC = () => {
                 )}
               </div>
 
-              {/* Footer Azioni Carrello */}
+              {/* Footer Azioni Carrello (Fuso con Riepilogo Stampe e Rilegature) */}
               {jobs.length > 0 && (
-                <div className="p-4 sm:p-5 bg-gray-50 border-t border-slate-200 space-y-2.5 shrink-0">
+                <div className="p-4 sm:p-5 bg-gray-50 border-t border-slate-200 space-y-2 shrink-0">
                   <button
                     type="button"
                     onClick={() => {
@@ -1373,27 +1399,54 @@ const App: React.FC = () => {
                     }}
                     className={`w-full h-13 ${isOxford ? 'bg-amber-600 hover:bg-amber-500' : 'bg-emerald-600 hover:bg-emerald-500'} text-white font-black text-xs sm:text-sm uppercase rounded-2xl flex items-center justify-center gap-2 shadow-lg transition-transform active:scale-[0.98] cursor-pointer`}
                   >
-                    Procedi all'Ordine & Ricevi Conferma <ArrowRight size={16} />
+                    <Mail size={16} />
+                    Conferma Ordine & Invia File <ArrowRight size={16} />
                   </button>
 
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-3 gap-1.5">
+                    <a
+                      onClick={() => saveToBackend()}
+                      href={getWhatsAppMessage()}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="h-10 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-black text-[10px] uppercase rounded-xl flex items-center justify-center gap-1 cursor-pointer transition-colors"
+                    >
+                      <svg className="w-3.5 h-3.5 fill-current text-emerald-600 shrink-0" viewBox="0 0 24 24">
+                        <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.724-1.455L0 24zm6.59-4.846c1.6.95 3.188 1.449 4.825 1.451 5.436 0 9.86-4.42 9.864-9.864.002-2.637-1.03-5.114-2.906-6.99C16.546 1.866 14.072 1.83 11.43 1.83c-5.44 0-9.866 4.418-9.87 9.864 0 1.902.504 3.75 1.464 5.362l-.993 3.628 3.717-.975zm11.167-7.464c-.309-.155-1.829-.902-2.107-1.002-.278-.1-.48-.15-.68.15-.2.3-.775.976-.95 1.176-.175.2-.351.225-.66.07-.309-.155-1.305-.48-2.485-1.534-.918-.818-1.538-1.829-1.718-2.137-.18-.31-.02-.477.135-.632.14-.139.31-.35.465-.525.155-.175.206-.3.309-.5.103-.2.051-.375-.025-.525-.077-.15-1.002-2.414-1.378-3.32-.367-.88-.74-.76-.102-.76-.2-.05-.401-.05-.575.125-.175.175-.68.665-.68 1.62s.696 1.874.794 2.005c.1.13 1.369 2.091 3.316 2.93.463.2.824.32 1.107.41.466.147.89.126 1.226.076.375-.056 1.143-.467 1.302-.917.16-.45.16-.837.113-.917-.047-.08-.175-.13-.484-.285z" />
+                      </svg>
+                      WhatsApp
+                    </a>
                     <button
                       type="button"
                       onClick={() => {
                         saveReceiptPdf();
                       }}
-                      className="h-10 bg-slate-800 hover:bg-slate-700 text-white font-black text-[11px] uppercase rounded-xl flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                      className="h-10 bg-slate-800 hover:bg-slate-700 text-white font-black text-[10px] uppercase rounded-xl flex items-center justify-center gap-1 cursor-pointer shadow-xs"
                     >
-                      <Download size={13} /> Scarica PDF
+                      <Download size={12} /> PDF
                     </button>
                     <button
                       type="button"
-                      onClick={() => setIsCartOpen(false)}
-                      className="h-10 bg-white hover:bg-slate-100 text-slate-700 font-bold text-[11px] uppercase rounded-xl border border-slate-200 transition-colors cursor-pointer"
+                      onClick={() => {
+                        saveReceiptPng();
+                      }}
+                      className="h-10 bg-slate-100 hover:bg-slate-200 text-slate-800 font-black text-[10px] uppercase rounded-xl border border-slate-200 flex items-center justify-center gap-1 cursor-pointer"
                     >
-                      Modifica Pagine
+                      <Download size={12} /> PNG
                     </button>
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsCartOpen(false);
+                      setIsStarted(true);
+                      setCurrentStep(1);
+                    }}
+                    className="w-full h-9 bg-white hover:bg-slate-100 text-slate-600 font-bold text-[10px] uppercase rounded-xl border border-slate-200 transition-colors cursor-pointer"
+                  >
+                    Modifica Pagine e Copie
+                  </button>
                 </div>
               )}
             </motion.div>
@@ -2295,12 +2348,10 @@ const App: React.FC = () => {
                   <span className="text-3xl font-black text-emerald-700">{fmt(calculated.netTotal)}</span>
                 </div>
 
-                {/* Pulsante Procedi a Step 2 */}
+                {/* Pulsante Unico: Apri Carrello Riassuntivo e Concludi Ordine */}
                 <button
-                  onClick={() => {
-                    setDirection('up');
-                    setCurrentStep(2);
-                  }}
+                  type="button"
+                  onClick={() => setIsCartOpen(true)}
                   className={`relative overflow-hidden w-full h-16 ${isOxford ? 'bg-amber-600 hover:bg-amber-500 shadow-amber-900/20' : 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/20'} text-white rounded-2xl font-bold text-lg flex items-center justify-center gap-3 btn-touch shadow-lg cursor-pointer mt-4`}
                 >
                   <motion.div
@@ -2310,18 +2361,9 @@ const App: React.FC = () => {
                     transition={{ repeat: Infinity, duration: 1.8, ease: 'linear', repeatDelay: 1 }}
                   />
                   <span className="relative z-10 flex items-center gap-3">
-                    Vai al Riepilogo e Ordine <ArrowRight size={20} />
+                    <ShoppingCart size={20} />
+                    Vai al Carrello e Concludi ({jobs.length}) <ArrowRight size={20} />
                   </span>
-                </button>
-
-                {/* Pulsante Apri Pagina Riassuntiva (Carrello) */}
-                <button
-                  type="button"
-                  onClick={() => setIsCartOpen(true)}
-                  className="w-full h-12 bg-white hover:bg-slate-100 text-slate-800 font-black text-xs uppercase rounded-2xl border border-slate-200 flex items-center justify-center gap-2 cursor-pointer shadow-xs transition-colors mt-2"
-                >
-                  <ShoppingCart size={16} className="text-slate-700" />
-                  Vedi Carrello Riassuntivo ({jobs.length})
                 </button>
               </div>
             ) : (
@@ -2335,171 +2377,6 @@ const App: React.FC = () => {
                 </button>
               </div>
             )}
-          </motion.div>
-        )}
-
-        {/* STEP 2: RIEPILOGO, WHATSAPP & SCONTRINO */}
-        {isStarted && currentStep === 2 && (
-          <motion.div
-            key="screen-step2-summary"
-            custom={direction}
-            variants={slideVariants}
-            initial="initial"
-            animate="animate"
-            exit="exit"
-            className="space-y-6"
-          >
-            {/* Tasto Modifica Pagine */}
-            <button
-              onClick={() => {
-                setDirection('down');
-                setCurrentStep(1);
-              }}
-              className="w-full h-11 bg-slate-100 hover:bg-slate-200 text-slate-700 font-black text-xs uppercase rounded-2xl flex items-center justify-center gap-2 transition-all active:scale-[0.98] border border-slate-200 cursor-pointer shadow-sm"
-            >
-              <ArrowUp size={16} /> Modifica Pagine e Copie
-            </button>
-
-            <div className="bg-white rounded-4xl p-6 card-shadow space-y-6 border border-gray-100">
-              <div>
-                <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">
-                  {isOxford ? 'Riepilogo Preventivo • Convenzione Oxford' : 'Riepilogo Stampe e Rilegature'}
-                </h4>
-
-                {/* Input Nome Cliente facoltativo per la ricevuta */}
-                <div className="mb-4">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1">
-                    Nome e Cognome per il preventivo:
-                  </label>
-                  <input 
-                    type="text" 
-                    value={customer}
-                    onChange={e => setCustomer(e.target.value)}
-                    placeholder="Es. Mario Rossi"
-                    className="w-full h-11 px-3.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-800 focus:outline-none focus:border-brandBlue"
-                  />
-                </div>
-
-                <div className="space-y-4 divide-y divide-gray-100">
-                  {calculated.jobDetails.map((d, idx) => (
-                    <div key={d.job.id} className="pt-4 first:pt-0 space-y-2 text-xs">
-                      <div className="flex justify-between items-start">
-                        <span className="font-black text-gray-900 uppercase">
-                          #{idx + 1} {d.job.name}
-                        </span>
-                        <span className="font-black text-brandBlue text-sm">
-                          {fmt(d.jobFinalCost)}
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-2 gap-1 text-[11px] text-gray-600">
-                        <div>Rilegatura: <span className="font-bold text-gray-800">{d.binding.title}</span></div>
-                        <div className="text-right">Copie: <span className="font-bold text-gray-800">x{d.copies}</span></div>
-                        <div>Pagine B&N: <span className="font-bold">{d.b}</span> ({fmt(d.b * d.bwRate)})</div>
-                        <div className="text-right">Pagine Colore: <span className="font-bold">{d.c}</span> ({fmt(d.c * d.colorRate)})</div>
-                      </div>
-                      {d.isOmaggio && (
-                        <div className="text-emerald-700 font-black text-[10px] uppercase flex items-center gap-1 bg-emerald-50 px-2 py-1 rounded-md">
-                          <Gift size={12} /> Rilegatura In Omaggio!
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-
-                {/* Dettagli Consegna & Sconti nel riepilogo */}
-                <div className="mt-4 pt-3 border-t border-dashed border-gray-200 space-y-1.5 text-xs text-gray-600">
-                  <div className="flex justify-between items-center">
-                    <span>Modalità Consegna:</span>
-                    <span className="font-bold text-gray-900">
-                      {deliveryMethod === 'spedizione_sda' ? 'Spedizione SDA' : 'Ritiro in sede Ostuni'}
-                    </span>
-                  </div>
-                  {deliveryMethod === 'spedizione_sda' && (
-                    <div className="flex justify-between items-center">
-                      <span>Costo Spedizione SDA:</span>
-                      <span className={`font-black ${calculated.shippingCost === 0 ? 'text-emerald-600' : 'text-gray-900'}`}>
-                        {calculated.shippingCost === 0 ? 'GRATIS (Ordine > 60€)' : fmt(calculated.shippingCost)}
-                      </span>
-                    </div>
-                  )}
-                  {isOxford && (
-                    <div className="flex justify-between items-center text-emerald-700 font-bold">
-                      <span>Sconto Convenzione Oxford (20%):</span>
-                      <span>-{fmt(calculated.totalConventionDiscount)}</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Box WhatsApp Contatto */}
-              <div className="bg-emerald-50/60 border border-emerald-100 rounded-3xl p-4 flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 flex items-center justify-center shrink-0">
-                  <svg className="w-5 h-5 text-emerald-600 fill-current" viewBox="0 0 24 24">
-                    <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.724-1.455L0 24zm6.59-4.846c1.6.95 3.188 1.449 4.825 1.451 5.436 0 9.86-4.42 9.864-9.864.002-2.637-1.03-5.114-2.906-6.99C16.546 1.866 14.072 1.83 11.43 1.83c-5.44 0-9.866 4.418-9.87 9.864 0 1.902.504 3.75 1.464 5.362l-.993 3.628 3.717-.975zm11.167-7.464c-.309-.155-1.829-.902-2.107-1.002-.278-.1-.48-.15-.68.15-.2.3-.775.976-.95 1.176-.175.2-.351.225-.66.07-.309-.155-1.305-.48-2.485-1.534-.918-.818-1.538-1.829-1.718-2.137-.18-.31-.02-.477.135-.632.14-.139.31-.35.465-.525.155-.175.206-.3.309-.5.103-.2.051-.375-.025-.525-.077-.15-1.002-2.414-1.378-3.32-.367-.88-.74-.76-.102-.76-.2-.05-.401-.05-.575.125-.175.175-.68.665-.68 1.62s.696 1.874.794 2.005c.1.13 1.369 2.091 3.316 2.93.463.2.824.32 1.107.41.466.147.89.126 1.226.076.375-.056 1.143-.467 1.302-.917.16-.45.16-.837.113-.917-.047-.08-.175-.13-.484-.285z" />
-                  </svg>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-[10px] font-black text-emerald-800 uppercase tracking-widest leading-none mb-1">Per Info e Ordini WhatsApp</p>
-                  <a href={`https://api.whatsapp.com/send?phone=${WA_PHONE}`} target="_blank" rel="noopener noreferrer" className="text-sm font-black text-emerald-700 hover:underline">
-                    391 7972545
-                  </a>
-                </div>
-              </div>
-
-              {/* Totale Complessivo */}
-              <div className="bg-emerald-50 rounded-3xl p-5 border border-emerald-100 flex justify-between items-center">
-                <div className="flex flex-col">
-                  <span className="text-[10px] font-black uppercase text-emerald-800/60 tracking-wider">Totale da Pagare</span>
-                  <span className="text-xs text-emerald-800/80 font-medium">IVA inclusa</span>
-                </div>
-                <span className="text-3xl font-black text-emerald-700">{fmt(calculated.netTotal)}</span>
-              </div>
-
-              {/* Pulsanti di Azione: Conferma Ordine + Email, WhatsApp & Download */}
-              <div className="space-y-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setConfirmedOrderId(null);
-                    setEmailSentInfo(null);
-                    setConfirmError('');
-                    setIsConfirmModalOpen(true);
-                  }}
-                  className={`relative overflow-hidden w-full h-14 ${isOxford ? 'bg-amber-600 hover:bg-amber-500' : 'bg-emerald-600 hover:bg-emerald-500'} text-white rounded-2xl font-black text-sm uppercase flex items-center justify-center gap-2 transition-all btn-touch cursor-pointer shadow-xl`}
-                >
-                  <Mail size={18} />
-                  Conferma Ordine & Invia File <ArrowRight size={16} />
-                </button>
-
-                <a 
-                  onClick={() => saveToBackend()}
-                  href={getWhatsAppMessage()}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="relative overflow-hidden w-full h-12 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-2xl font-bold text-xs uppercase flex items-center justify-center gap-2 transition-all btn-touch cursor-pointer"
-                >
-                  <svg className="w-4 h-4 fill-current text-emerald-600" viewBox="0 0 24 24">
-                    <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.724-1.455L0 24zm6.59-4.846c1.6.95 3.188 1.449 4.825 1.451 5.436 0 9.86-4.42 9.864-9.864.002-2.637-1.03-5.114-2.906-6.99C16.546 1.866 14.072 1.83 11.43 1.83c-5.44 0-9.866 4.418-9.87 9.864 0 1.902.504 3.75 1.464 5.362l-.993 3.628 3.717-.975zm11.167-7.464c-.309-.155-1.829-.902-2.107-1.002-.278-.1-.48-.15-.68.15-.2.3-.775.976-.95 1.176-.175.2-.351.225-.66.07-.309-.155-1.305-.48-2.485-1.534-.918-.818-1.538-1.829-1.718-2.137-.18-.31-.02-.477.135-.632.14-.139.31-.35.465-.525.155-.175.206-.3.309-.5.103-.2.051-.375-.025-.525-.077-.15-1.002-2.414-1.378-3.32-.367-.88-.74-.76-.102-.76-.2-.05-.401-.05-.575.125-.175.175-.68.665-.68 1.62s.696 1.874.794 2.005c.1.13 1.369 2.091 3.316 2.93.463.2.824.32 1.107.41.466.147.89.126 1.226.076.375-.056 1.143-.467 1.302-.917.16-.45.16-.837.113-.917-.047-.08-.175-.13-.484-.285z" />
-                  </svg>
-                  Invia Preventivo su WhatsApp
-                </a>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <button 
-                    onClick={saveReceiptPng} 
-                    className="h-12 bg-slate-800 hover:bg-slate-700 text-white font-black text-xs uppercase rounded-xl flex items-center justify-center gap-1.5 cursor-pointer shadow"
-                  >
-                    <Download size={14} /> Scarica PNG
-                  </button>
-                  <button 
-                    onClick={saveReceiptPdf} 
-                    className="h-12 bg-slate-100 hover:bg-slate-200 text-slate-800 font-black text-xs uppercase rounded-xl flex items-center justify-center gap-1.5 cursor-pointer border border-slate-200"
-                  >
-                    <Download size={14} /> Scarica PDF
-                  </button>
-                </div>
-              </div>
-            </div>
           </motion.div>
         )}
       </AnimatePresence>

@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, serverTimestamp, doc, getDocFromServer } from 'firebase/firestore';
 import firebaseConfig from './firebase-applet-config.json';
 
 // Configurazione ibrida: supporta sia le variabili d'ambiente VITE_ (per evitare avvisi nei commit Git)
@@ -20,6 +20,63 @@ const app = getApps().length === 0 ? initializeApp(activeFirebaseConfig) : getAp
 
 // Inizializza Firestore indicando il databaseId specificato nella configurazione
 export const db = getFirestore(app, activeFirebaseConfig.firestoreDatabaseId || '(default)');
+
+export enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+export interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  };
+}
+
+export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null): never {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: null,
+      email: null,
+      emailVerified: null,
+      isAnonymous: true,
+      tenantId: null,
+      providerInfo: [],
+    },
+    operationType,
+    path,
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
+async function testConnection() {
+  try {
+    await getDocFromServer(doc(db, 'preventivi', '_connection_check'));
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('the client is offline')) {
+      console.error('Please check your Firebase configuration.');
+    }
+  }
+}
+if (typeof window !== 'undefined') {
+  testConnection();
+}
 
 export interface PreventivoItem {
   id: string;
@@ -68,6 +125,7 @@ function cleanUndefined<T>(obj: T): T {
 }
 
 export const savePreventivoToFirestore = async (data: PreventivoData) => {
+  const path = 'preventivi';
   try {
     const rawPayload = {
       ...data,
@@ -77,12 +135,11 @@ export const savePreventivoToFirestore = async (data: PreventivoData) => {
       dispositivo: typeof window !== 'undefined' ? `${window.screen.width}x${window.screen.height}` : ''
     };
     const cleanedPayload = cleanUndefined(rawPayload);
-    const preventiviRef = collection(db, 'preventivi');
+    const preventiviRef = collection(db, path);
     const docRef = await addDoc(preventiviRef, cleanedPayload);
-    console.log('Preventivo salvato su Firestore con ID:', docRef.id);
     return docRef.id;
   } catch (error) {
-    console.error('Errore durante il salvataggio su Firestore:', error);
-    throw error;
+    handleFirestoreError(error, OperationType.CREATE, path);
   }
 };
+

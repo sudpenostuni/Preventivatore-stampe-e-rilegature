@@ -35,6 +35,7 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
     fileSize: 50 * 1024 * 1024, // 50 MB per file
+    fieldSize: 25 * 1024 * 1024, // 25 MB per campo JSON
     files: 20,
   },
 });
@@ -50,7 +51,15 @@ async function startServer() {
 
   // API routes FIRST
   app.get("/api/health", (_req, res) => {
-    res.json({ status: "ok" });
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.json({ status: "ok", ts: Date.now() });
+  });
+
+  // Se il proxy nginx converte una POST in GET tramite 302 durante il refresh del token,
+  // rispondiamo in JSON chiedendo al client di ritentare subito la POST (con cache ora calda).
+  app.get("/api/send-order-email", (_req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.status(409).json({ retryPost: true });
   });
 
   app.post("/api/avatar/upload", async (req, res) => {
